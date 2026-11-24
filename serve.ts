@@ -1,52 +1,39 @@
-// Tiny static file server for local testing: `node serve.ts` (port 8080).
-// Serves the repository root, resolved from this file's location.
+// Tiny static file server for local testing: serves the repo root on :8080.
 import { createServer } from "node:http";
-import { existsSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { dirname, extname, join, resolve, sep } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const PORT = 8080;
-
+const root = dirname(fileURLToPath(import.meta.url));
 const TYPES = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".ts": "text/plain; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
+  ".html": "text/html",
+  ".js": "text/javascript",
+  ".mjs": "text/javascript",
+  ".json": "application/json",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
-  ".svg": "image/svg+xml",
+  ".css": "text/css",
+  ".ts": "text/plain",
 };
 
-const server = createServer(async (req, res) => {
-  try {
-    const url = new URL(req.url || "/", "http://localhost");
-    let path = decodeURIComponent(url.pathname);
-    if (path === "/") path = "/game/index.html";
-    const file = resolve(join(here, path));
-    if (!file.startsWith(here + sep) && file !== here) {
-      res.writeHead(403);
-      res.end("forbidden");
-      return;
-    }
-    if (!existsSync(file) || !statSync(file).isFile()) {
-      res.writeHead(404);
-      res.end("not found");
-      return;
-    }
-    const body = await readFile(file);
-    res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
-    res.end(body);
-  } catch {
-    res.writeHead(500);
-    res.end("error");
+const server = createServer((req, res) => {
+  const path = decodeURIComponent(new URL(req.url || "/", "http://x").pathname);
+  // The game lives under game/, so send the root to its page (a redirect,
+  // so the page's relative module paths still resolve under /game/).
+  if (path === "/") {
+    res.writeHead(302, { location: "/game/index.html" });
+    res.end();
+    return;
   }
+  const file = join(root, path);
+  if (!existsSync(file) || !statSync(file).isFile()) {
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("not found");
+    return;
+  }
+  res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
+  res.end(readFileSync(file));
 });
 
-server.listen(PORT, () => {
-  console.log(`Pipe Panic! dev server at http://localhost:${PORT}/game/index.html`);
-});
+server.listen(8080, () => console.log("serving http://localhost:8080/"));

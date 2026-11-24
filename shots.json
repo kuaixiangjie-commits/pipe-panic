@@ -1,1 +1,1 @@
-{"shots":[{"file":"1-start.jpg","name":"start","query":"?shot=start&seed=7"},{"file":"2-play.jpg","name":"play","query":"?shot=play&seed=7"},{"file":"3-end.jpg","name":"end","query":"?shot=end&seed=7"}]}
+{"shots":[{"file":"screenshots/1-start.jpg","name":"start","query":"?shot=start&seed=7"},{"file":"screenshots/2-play.jpg","name":"play","query":"?shot=play&seed=7"},{"file":"screenshots/3-end.jpg","name":"end","query":"?shot=end&seed=7"}]}
