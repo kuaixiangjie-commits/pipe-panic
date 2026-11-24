@@ -1,432 +1,434 @@
-// Pipe Panic! — the game's rules and state, with no drawing and no browser
-// in it: the plumber, the burst pipes, the spreading water, the pickups, the
-// pressure gauge, the score and the clock. step() advances one fixed step and
-// returns what happened as bit flags, so the caller can react (and play a
-// sound) without the world knowing about screens or sound. Nothing here
-// allocates after createWorld returns, except the short-lived particle list.
-
+// Pipe Panic! — the game world: player, pipes, water, pressure, pickups,
+// scoring, and the win / lose rules. All coordinates are map coordinates
+// (0..1600, 0..1200); the renderer adds the HUD offset when drawing.
 import {
-  CELL, GRID_COLS, GRID_ROWS, PIPE, PLAYER, PRESSURE, PICKUP, SCORE,
-  SHIFT_SECONDS, WATER,
-} from './config.js';
-import { PIPE_RUNS, SPAWN, buildMap, cellOf, circleBlocked, isBlockedCell, pipePointIsOpen } from './map.js';
+  BEST_KEY,
+  COFFEE_SPEED,
+  COLS,
+  FLOOD_COVERAGE,
+  MOP_RADIUS,
+  MOP_RATE,
+  PICKUP_DURATION,
+  PIPE_COUNT,
+  PLAYER_R,
+  PLAYER_SPEED,
+  POINTS_DUCK,
+  POINTS_MOP_PER_UNIT,
+  POINTS_REPAIR,
+  POINTS_TIME_BONUS,
+  PRESSURE_BUSY,
+  PRESSURE_CALM,
+  PRESSURE_RUSH,
+  REBURST_CHANCE,
+  REBURST_MIN_GAP,
+  REPAIR_RANGE,
+  REPAIR_RATE,
+  ROWS,
+  SHIFT_SECONDS,
+  TILE,
+  WATER_COVER_THRESHOLD,
+  WATER_DIFFUSE,
+  WATER_INJECT,
+  WRENCH_RATE,
+} from "./config.js";
+import { PIPES, PICKUPS, PLAYER_START, buildGrid, tileCenter } from "./map.js";
 
-export const EVENT_FIX = 1;
-export const EVENT_PICKUP = 2;
-export const EVENT_WIN = 4;
-export const EVENT_OVER = 8;
-export const EVENT_ALARM = 16;
-export const EVENT_BURST = 32;
-export const EVENT_MOP = 64;
-
-const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-
-/** Fixed pickup spots: kept clear of every wall and piece of furniture. */
-const PICKUP_SPOTS = [
-  { x: 400, y: 150, kind: 'wrench' },
-  { x: 1400, y: 600, kind: 'coffee' },
-  { x: 1250, y: 250, kind: 'duck' },
-  { x: 300, y: 1000, kind: 'duck' },
-  { x: 1450, y: 900, kind: 'duck' },
-];
-
-function distance(ax, ay, bx, by) {
-  const dx = ax - bx;
-  const dy = ay - by;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-
-export function pressureTier(pressure) {
-  let tier = 0;
-  for (let i = 0; i < PRESSURE.tiers.length; i += 1) {
-    if (pressure >= PRESSURE.tiers[i].at) tier = i;
-  }
-  return tier;
-}
-
-export function createWorld(random) {
-  const map = buildMap();
-  const water = new Uint8Array(GRID_COLS * GRID_ROWS);
-  const wetList = [];
-  const particles = [];
-  const player = {
-    x: SPAWN.x, y: SPAWN.y, facing: -Math.PI / 2, moving: false,
-    wrenchT: 0, coffeeT: 0, mopProgress: 0,
-  };
-  const state = {
-    map, water, wetList, particles, player,
-    pipes: [], spares: [], pickups: [],
-    score: 0, fixedCount: 0, burstCount: 0,
-    timeLeft: SHIFT_SECONDS, flood: 0, pressure: 0, tier: 0,
-    elapsed: 0, drainTimer: WATER.drainInterval, extraBurstTimer: PIPE.extraBurstInterval,
-    won: false, over: false, overReason: '',
-  };
-
-  function wetCell(index) {
-    if (water[index] === 0) {
-      water[index] = 1;
-      state.wetCells += 1;
-      wetList.push(index);
-    } else if (water[index] === 1) {
-      water[index] = 2;
-    }
-  }
-
-  function dryCell(index) {
-    if (water[index] === 0) return;
-    water[index] -= 1;
-    if (water[index] === 0) {
-      state.wetCells -= 1;
-      const at = wetList.indexOf(index);
-      if (at !== -1) wetList.splice(at, 1);
-    }
-  }
-
-  function cellIndex(col, row) {
-    return row * GRID_COLS + col;
-  }
-
-  function isFloorCell(col, row) {
-    if (col < 0 || col >= GRID_COLS || row < 0 || row >= GRID_ROWS) return false;
-    return map.blocked[cellIndex(col, row)] === 0;
-  }
-
-  function dryNeighbourOf(col, row) {
-    // Fisher-Yates with the seeded stream: a fixed number of draws, so the
-  // same seed gives the same shift in every engine (Array.sort with a random
-  // comparator calls it an engine-dependent number of times).
-  const order = [0, 1, 2, 3];
-  for (let i = order.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(random() * (i + 1));
-    const tmp = order[i];
-    order[i] = order[j];
-    order[j] = tmp;
-  }
-    for (let i = 0; i < order.length; i += 1) {
-      const nextCol = col + DIRS[order[i]][0];
-      const nextRow = row + DIRS[order[i]][1];
-      if (!isFloorCell(nextCol, nextRow)) continue;
-      const index = cellIndex(nextCol, nextRow);
-      if (water[index] === 0) return index;
-    }
-    return -1;
-  }
-
-  function seedPuddle(pipe) {
-    const c = cellOf(pipe.x, pipe.y);
-    for (let i = 0; i < 2; i += 1) {
-      const index = dryNeighbourOf(c.col, c.row);
-      if (index !== -1) wetCell(index);
-    }
-  }
-
-  function spreadWater() {
-    let index = -1;
-    if (wetList.length === 0) {
-      const open = state.pipes.filter((p) => !p.fixed);
-      if (open.length === 0) return;
-      const pipe = open[Math.floor(random() * open.length)];
-      const c = cellOf(pipe.x, pipe.y);
-      index = dryNeighbourOf(c.col, c.row);
-    } else {
-      const from = wetList[Math.floor(random() * wetList.length)];
-      const col = from % GRID_COLS;
-      const row = Math.floor(from / GRID_COLS);
-      index = dryNeighbourOf(col, row);
-      if (index === -1 && water[from] === 1) water[from] = 2;
-    }
-    if (index !== -1) wetCell(index);
-  }
-
-  function burstPoints() {
-    const points = [];
-    for (let r = 0; r < PIPE_RUNS.length; r += 1) {
-      const run = PIPE_RUNS[r];
-      const length = Math.hypot(run.x2 - run.x1, run.y2 - run.y1);
-      const steps = Math.max(1, Math.floor(length / 90));
-      for (let i = 0; i < steps; i += 1) {
-        const t = (i + 0.5) / steps;
-        const x = run.x1 + (run.x2 - run.x1) * t;
-        const y = run.y1 + (run.y2 - run.y1) * t;
-        // The point's own cell must be floor (runs cross walls, but a burst
-        // inside a wall could never be reached), and the floor beside it must
-        // be open enough to stand on while repairing.
-        const c = cellOf(x, y);
-        if (isBlockedCell(map.blocked, c.col, c.row)) continue;
-        if (pipePointIsOpen(map.blocked, x, y)) points.push({ x, y });
+export class World {
+  constructor() {
+    this.grid = buildGrid();
+    this.floor = new Uint8Array(COLS * ROWS);
+    this.floorTiles = 0;
+    for (let ty = 0; ty < ROWS; ty++) {
+      for (let tx = 0; tx < COLS; tx++) {
+        if (this.grid[ty][tx] === 0) {
+          this.floor[ty * COLS + tx] = 1;
+          this.floorTiles++;
+        }
       }
     }
-    for (let i = points.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(random() * (i + 1));
-      const tmp = points[i];
-      points[i] = points[j];
-      points[j] = tmp;
+    this.water = new Float32Array(COLS * ROWS);
+    this.scratch = new Float32Array(COLS * ROWS);
+    this.best = 0;
+    try {
+      this.best = Number(localStorage.getItem(BEST_KEY)) || 0;
+    } catch {
+      this.best = 0;
     }
-    return points;
+    this.time = 0; // render clock, always advances (drives animations)
+    this.frozen = false; // staged ?shot= scenes freeze the simulation
+    this.reset();
+    this.screen = "title";
   }
 
-  function burstPipe(point) {
+  // Fresh state. The caller sets `screen` afterwards.
+  reset() {
+    this.timeLeft = SHIFT_SECONDS;
+    this.score = 0;
+    this.timeBonus = 0;
+    this.mopAcc = 0;
+    this.pressure = 0;
+    this.pressureTier = "CALM";
+    this.reason = "";
+    this.won = false;
+    this.lost = false;
+    this.elapsed = 0;
+    this.water.fill(0);
+    this.pipes = PIPES.map((p) => {
+      const c = tileCenter(p.tx, p.ty);
+      return {
+        id: p.id,
+        tx: p.tx,
+        ty: p.ty,
+        room: p.room,
+        x: c.x,
+        y: c.y,
+        burst: true,
+        progress: 0,
+      };
+    });
+    this.pickups = PICKUPS.map((p) => {
+      const c = tileCenter(p.tx, p.ty);
+      return { kind: p.kind, tx: p.tx, ty: p.ty, x: c.x, y: c.y, taken: false };
+    });
+    const s = tileCenter(PLAYER_START.tx, PLAYER_START.ty);
+    this.player = { x: s.x, y: s.y, r: PLAYER_R, face: 1, moving: false };
+    this.wrenchTime = 0;
+    this.coffeeTime = 0;
+    this.lastReburst = 0;
+    this.repairTarget = null;
+    this.mopping = false;
+    this.repairFx = 0;
+    this.mopFx = 0;
+    this.alarmAt = 0;
+    this.frozen = false;
+  }
+
+  start() {
+    this.reset();
+    this.screen = "playing";
+  }
+
+  get pipesFixed() {
+    let n = 0;
+    for (const p of this.pipes) if (!p.burst) n++;
+    return n;
+  }
+
+  coverage() {
+    let wet = 0;
+    for (let i = 0; i < this.water.length; i++) {
+      if (this.floor[i] && this.water[i] >= WATER_COVER_THRESHOLD) wet++;
+    }
+    return this.floorTiles === 0 ? 0 : wet / this.floorTiles;
+  }
+
+  tierFor(pressure) {
+    if (pressure < PRESSURE_CALM) return "CALM";
+    if (pressure < PRESSURE_BUSY) return "BUSY";
+    if (pressure < PRESSURE_RUSH) return "RUSH";
+    return "FLOODING";
+  }
+
+  // Set pressure from the current state at once (used to stage scenes).
+  settlePressure() {
+    const burst = this.pipes.filter((p) => p.burst).length;
+    this.pressure = 15 + 55 * this.coverage() + 6 * burst;
+    this.pressureTier = this.tierFor(this.pressure);
+  }
+
+  nearestBurstPipe(range) {
+    let bestPipe = null;
+    let bestD = Infinity;
+    for (const p of this.pipes) {
+      if (!p.burst) continue;
+      const d = Math.hypot(p.x - this.player.x, p.y - this.player.y);
+      if (d < bestD) {
+        bestD = d;
+        bestPipe = p;
+      }
+    }
+    return bestD <= range ? bestPipe : null;
+  }
+
+  hitsSolid(x, y, r) {
+    const x0 = Math.max(0, Math.floor((x - r) / TILE));
+    const x1 = Math.min(COLS - 1, Math.floor((x + r) / TILE));
+    const y0 = Math.max(0, Math.floor((y - r) / TILE));
+    const y1 = Math.min(ROWS - 1, Math.floor((y + r) / TILE));
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        if (this.grid[ty][tx] === 0) continue;
+        const cx = Math.max(tx * TILE, Math.min(x, tx * TILE + TILE));
+        const cy = Math.max(ty * TILE, Math.min(y, ty * TILE + TILE));
+        const dx = x - cx;
+        const dy = y - cy;
+        if (dx * dx + dy * dy < r * r) return true;
+      }
+    }
+    return false;
+  }
+
+  moveAxis(p, dx, dy) {
+    const nx = p.x + dx;
+    const ny = p.y + dy;
+    if (!this.hitsSolid(nx, ny, p.r)) {
+      p.x = nx;
+      p.y = ny;
+      return;
+    }
+    // Corner assist: the direct step is blocked (a wall corner or a door
+    // frame). Try the same step with a small sideways nudge so the plumber
+    // slides into a doorway instead of wedging on a corner. The nudge only
+    // applies when the nudged spot is clear, so it can never push the
+    // plumber through a gap too narrow to fit.
+    const steps = [3, 6, 9, 12];
+    for (const s of steps) {
+      for (const sign of [1, -1]) {
+        const ox = dx !== 0 ? 0 : s * sign;
+        const oy = dy !== 0 ? 0 : s * sign;
+        if (!this.hitsSolid(p.x + dx + ox, p.y + dy + oy, p.r)) {
+          p.x = p.x + dx + ox;
+          p.y = p.y + dy + oy;
+          return;
+        }
+      }
+    }
+  }
+
+  mop(dt) {
+    const p = this.player;
+    const r = MOP_RADIUS;
+    const x0 = Math.max(0, Math.floor((p.x - r) / TILE));
+    const x1 = Math.min(COLS - 1, Math.floor((p.x + r) / TILE));
+    const y0 = Math.max(0, Math.floor((p.y - r) / TILE));
+    const y1 = Math.min(ROWS - 1, Math.floor((p.y + r) / TILE));
+    let removed = 0;
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        const cx = tx * TILE + TILE / 2;
+        const cy = ty * TILE + TILE / 2;
+        if (Math.hypot(cx - p.x, cy - p.y) > r) continue;
+        const i = ty * COLS + tx;
+        const take = Math.min(this.water[i], MOP_RATE * dt);
+        this.water[i] -= take;
+        removed += take;
+      }
+    }
+    return removed;
+  }
+
+  updateWater(dt) {
+    const w = this.water;
+    const s = this.scratch;
+    for (const p of this.pipes) {
+      if (!p.burst) continue;
+      const i = p.ty * COLS + p.tx;
+      w[i] = Math.min(1, w[i] + WATER_INJECT * dt);
+    }
+    const k = Math.min(1, WATER_DIFFUSE * dt);
+    for (let ty = 0; ty < ROWS; ty++) {
+      for (let tx = 0; tx < COLS; tx++) {
+        const i = ty * COLS + tx;
+        if (this.grid[ty][tx] !== 0) {
+          s[i] = 0;
+          continue;
+        }
+        let sum = w[i];
+        let n = 1;
+        if (tx > 0 && this.grid[ty][tx - 1] === 0) {
+          sum += w[i - 1];
+          n++;
+        }
+        if (tx < COLS - 1 && this.grid[ty][tx + 1] === 0) {
+          sum += w[i + 1];
+          n++;
+        }
+        if (ty > 0 && this.grid[ty - 1][tx] === 0) {
+          sum += w[i - COLS];
+          n++;
+        }
+        if (ty < ROWS - 1 && this.grid[ty + 1][tx] === 0) {
+          sum += w[i + COLS];
+          n++;
+        }
+        s[i] = w[i] + (sum / n - w[i]) * k;
+      }
+    }
+    this.water.set(s);
+  }
+
+  win() {
+    this.screen = "win";
+    this.won = true;
+    this.timeBonus = Math.ceil(this.timeLeft) * POINTS_TIME_BONUS;
+    this.score += this.timeBonus;
+    this.saveBest();
+  }
+
+  lose(reason) {
+    this.screen = "lose";
+    this.lost = true;
+    this.reason = reason;
+    this.timeBonus = 0;
+    this.saveBest();
+  }
+
+  saveBest() {
+    if (this.score > this.best) {
+      this.best = this.score;
+      try {
+        localStorage.setItem(BEST_KEY, String(this.best));
+      } catch {
+        // Storage may be unavailable; the best score is a nicety.
+      }
+    }
+  }
+
+  update(dt, input, sound) {
+    this.time += dt;
+    this.repairFx = Math.max(0, this.repairFx - dt);
+    this.mopFx = Math.max(0, this.mopFx - dt);
+    if (this.screen !== "playing" || this.frozen) return;
+
+    this.elapsed += dt;
+    this.timeLeft -= dt;
+    if (this.timeLeft <= 0) {
+      this.timeLeft = 0;
+      this.lose("time");
+      sound.lose();
+      return;
+    }
+    if (this.wrenchTime > 0) this.wrenchTime -= dt;
+    if (this.coffeeTime > 0) this.coffeeTime -= dt;
+
+    // Movement (axis-separated so the plumber slides along walls).
+    let dx = 0;
+    let dy = 0;
+    if (input.isDown("KeyA", "ArrowLeft")) dx -= 1;
+    if (input.isDown("KeyD", "ArrowRight")) dx += 1;
+    if (input.isDown("KeyW", "ArrowUp")) dy -= 1;
+    if (input.isDown("KeyS", "ArrowDown")) dy += 1;
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len;
+    dy /= len;
+    const speed = this.coffeeTime > 0 ? COFFEE_SPEED : PLAYER_SPEED;
+    const p = this.player;
+    p.moving = dx !== 0 || dy !== 0;
+    if (dx !== 0) p.face = dx > 0 ? 1 : -1;
+    this.moveAxis(p, dx * speed * dt, 0);
+    this.moveAxis(p, 0, dy * speed * dt);
+
+    // Hold E: repair a burst pipe nearby, or mop up water.
+    const eHeld = input.isDown("KeyE");
+    this.repairTarget = null;
+    this.mopping = false;
+    if (eHeld) {
+      const pipe = this.nearestBurstPipe(REPAIR_RANGE);
+      if (pipe) {
+        this.repairTarget = pipe;
+        const rate = this.wrenchTime > 0 ? WRENCH_RATE : REPAIR_RATE;
+        pipe.progress += rate * dt;
+        this.repairFx = 0.15;
+        sound.tick();
+        if (pipe.progress >= 1) {
+          pipe.burst = false;
+          pipe.progress = 0;
+          this.score += POINTS_REPAIR;
+          sound.fixed();
+          if (this.pipesFixed === PIPE_COUNT) {
+            this.win();
+            sound.win();
+            return;
+          }
+        }
+      } else {
+        this.mopping = true;
+        this.mopFx = 0.15;
+        const removed = this.mop(dt);
+        if (removed > 0) {
+          this.mopAcc += removed * POINTS_MOP_PER_UNIT;
+          if (this.mopAcc >= 1) {
+            const add = Math.floor(this.mopAcc);
+            this.score += add;
+            this.mopAcc -= add;
+          }
+        }
+      }
+    }
+
+    // Pickups.
+    for (const pk of this.pickups) {
+      if (pk.taken) continue;
+      const d = Math.hypot(pk.x - p.x, pk.y - p.y);
+      if (d < 30) {
+        pk.taken = true;
+        if (pk.kind === "wrench") {
+          this.wrenchTime = PICKUP_DURATION;
+          sound.pickup();
+        } else if (pk.kind === "coffee") {
+          this.coffeeTime = PICKUP_DURATION;
+          sound.pickup();
+        } else if (pk.kind === "duck") {
+          this.score += POINTS_DUCK;
+          sound.quack();
+        }
+      }
+    }
+
+    // Water spreads from every burst pipe.
+    this.updateWater(dt);
+    const cov = this.coverage();
+    if (cov >= FLOOD_COVERAGE) {
+      this.lose("flood");
+      sound.lose();
+      return;
+    }
+
+    // Pressure follows the water and the burst pipes.
+    const burstCount = this.pipes.filter((q) => q.burst).length;
+    const target = 15 + 55 * cov + 6 * burstCount;
+    this.pressure += (target - this.pressure) * Math.min(1, 0.4 * dt);
+    this.pressureTier = this.tierFor(this.pressure);
+    if (this.pressureTier === "FLOODING" && this.time - this.alarmAt > 2.5) {
+      this.alarmAt = this.time;
+      sound.alarm();
+    }
+
+    // At high pressure a repaired pipe can burst again mid-shift.
+    if (this.pressure >= PRESSURE_RUSH && this.elapsed - this.lastReburst > REBURST_MIN_GAP) {
+      const fixed = this.pipes.filter((q) => !q.burst);
+      if (fixed.length > 0 && Math.random() < REBURST_CHANCE * dt) {
+        const pick = fixed[Math.floor(Math.random() * fixed.length)];
+        pick.burst = true;
+        pick.progress = 0;
+        this.lastReburst = this.elapsed;
+      }
+    }
+  }
+
+  // Plain snapshot for the autopilot / debugging (no methods, no cycles).
+  snapshot() {
     return {
-      x: point.x, y: point.y, health: 0, fixed: false,
-      leakTimer: WATER.spreadInterval * (0.5 + random()),
-      spraySeed: random() * Math.PI * 2,
+      screen: this.screen,
+      timeLeft: Math.ceil(this.timeLeft),
+      score: this.score,
+      best: this.best,
+      pipesFixed: this.pipesFixed,
+      pipes: this.pipes.map((p) => ({
+        x: p.x,
+        y: p.y,
+        tx: p.tx,
+        ty: p.ty,
+        burst: p.burst,
+        progress: p.progress,
+      })),
+      player: { x: this.player.x, y: this.player.y },
+      coverage: this.coverage(),
+      pressure: this.pressure,
+      tier: this.pressureTier,
+      reason: this.reason,
+      wrenchTime: Math.max(0, this.wrenchTime),
+      coffeeTime: Math.max(0, this.coffeeTime),
     };
   }
-
-  function spawnParticles(x, y, color, count, speed) {
-    for (let i = 0; i < count && particles.length < 120; i += 1) {
-      const angle = random() * Math.PI * 2;
-      const velocity = speed * (0.4 + random() * 0.8);
-      particles.push({
-        x, y,
-        vx: Math.cos(angle) * velocity,
-        vy: Math.sin(angle) * velocity - 40,
-        life: 0.5 + random() * 0.4, maxLife: 0.9,
-        color, size: 3 + random() * 4,
-      });
-    }
-  }
-
-  function reset() {
-    player.x = SPAWN.x;
-    player.y = SPAWN.y;
-    player.facing = -Math.PI / 2;
-    player.moving = false;
-    player.wrenchT = 0;
-    player.coffeeT = 0;
-    player.mopProgress = 0;
-    water.fill(0);
-    wetList.length = 0;
-    particles.length = 0;
-    state.wetCells = 0;
-    state.score = 0;
-    state.fixedCount = 0;
-    state.timeLeft = SHIFT_SECONDS;
-    state.flood = 0;
-    state.pressure = 0;
-    state.tier = 0;
-    state.elapsed = 0;
-    state.drainTimer = WATER.drainInterval;
-    state.extraBurstTimer = PIPE.extraBurstInterval;
-    state.won = false;
-    state.over = false;
-    state.overReason = '';
-    state.repairing = false;
-    const points = burstPoints();
-    state.pipes = points.slice(0, PIPE.count).map(burstPipe);
-    state.spares = points.slice(PIPE.count, PIPE.maxBurst);
-    state.burstCount = state.pipes.length;
-    for (const pipe of state.pipes) seedPuddle(pipe);
-    state.pickups = PICKUP_SPOTS.map((spot) => ({ x: spot.x, y: spot.y, kind: spot.kind, taken: false }));
-  }
-
-  function nearestBurstPipe() {
-    let best = null;
-    let bestDistance = Infinity;
-    for (const pipe of state.pipes) {
-      if (pipe.fixed) continue;
-      const d = distance(player.x, player.y, pipe.x, pipe.y);
-      if (d < bestDistance) {
-        bestDistance = d;
-        best = pipe;
-      }
-    }
-    return bestDistance <= PLAYER.reach ? best : null;
-  }
-
-  function wetCellNearPlayer() {
-    const c = cellOf(player.x, player.y);
-    for (let row = c.row - 1; row <= c.row + 1; row += 1) {
-      for (let col = c.col - 1; col <= c.col + 1; col += 1) {
-        if (!isFloorCell(col, row)) continue;
-        const index = cellIndex(col, row);
-        if (water[index] > 0) return index;
-      }
-    }
-    return -1;
-  }
-
-  function standingInWater() {
-    const c = cellOf(player.x, player.y);
-    if (!isFloorCell(c.col, c.row)) return false;
-    return water[cellIndex(c.col, c.row)] > 0;
-  }
-
-  /**
-   * One fixed step. `move` is {x, y} with each component -1, 0 or 1; `action`
-   * is true while E is held (repair a burst pipe, else mop water). With
-   * `harmless` set (the title screen's backdrop) pipes leak for show but the
-   * flood, the pressure, the clock and the score all stand still.
-   */
-  function step(dt, move, action, harmless) {
-    let events = 0;
-    state.elapsed += dt;
-
-    // Move, one axis at a time so a wall never stops both.
-    let speed = player.coffeeT > 0 ? PLAYER.coffeeSpeed : PLAYER.speed;
-    if (standingInWater()) speed *= PLAYER.waterSlow;
-    const diagonal = move.x !== 0 && move.y !== 0 ? 0.7071 : 1;
-    const dx = move.x * speed * diagonal * dt;
-    const dy = move.y * speed * diagonal * dt;
-    player.moving = dx !== 0 || dy !== 0;
-    if (player.moving) player.facing = Math.atan2(move.y, move.x);
-    if (dx !== 0 && !circleBlocked(map.blocked, player.x + dx, player.y, PLAYER.radius)) player.x += dx;
-    if (dy !== 0 && !circleBlocked(map.blocked, player.x, player.y + dy, PLAYER.radius)) player.y += dy;
-    if (player.wrenchT > 0) player.wrenchT = Math.max(0, player.wrenchT - dt);
-    if (player.coffeeT > 0) player.coffeeT = Math.max(0, player.coffeeT - dt);
-
-    // Pickups: walk over one to take it.
-    for (const pickup of state.pickups) {
-      if (pickup.taken) continue;
-      if (distance(player.x, player.y, pickup.x, pickup.y) > 30) continue;
-      pickup.taken = true;
-      if (pickup.kind === 'wrench') {
-        player.wrenchT = PICKUP.wrenchSeconds;
-        state.score += PICKUP.pickupPoints;
-      } else if (pickup.kind === 'coffee') {
-        player.coffeeT = PICKUP.coffeeSeconds;
-        state.score += PICKUP.pickupPoints;
-      } else {
-        state.score += PICKUP.duckPoints;
-      }
-      spawnParticles(pickup.x, pickup.y, '#f2c94c', 10, 120);
-      events |= EVENT_PICKUP;
-    }
-
-    // Repair a burst pipe, else mop the water at the plumber's feet.
-    if (action && !harmless) {
-      const pipe = nearestBurstPipe();
-      state.repairing = pipe !== null;
-      if (pipe !== null) {
-        const rate = player.wrenchT > 0 ? PLAYER.wrenchRepairRate : PLAYER.repairRate;
-        pipe.health += rate * dt;
-        player.facing = Math.atan2(pipe.y - player.y, pipe.x - player.x);
-        if (random() < 0.25) spawnParticles(pipe.x, pipe.y, '#f2c94c', 1, 60);
-        if (pipe.health >= PIPE.health) {
-          pipe.health = PIPE.health;
-          pipe.fixed = true;
-          state.fixedCount += 1;
-          state.score += PIPE.points;
-          state.pressure = Math.max(0, state.pressure - PRESSURE.fixDrop);
-          spawnParticles(pipe.x, pipe.y, '#7fc96b', 16, 160);
-          events |= EVENT_FIX;
-        }
-      } else {
-        const cell = wetCellNearPlayer();
-        if (cell !== -1) {
-          player.mopProgress += dt;
-          if (player.mopProgress >= PLAYER.mopInterval) {
-            player.mopProgress = 0;
-            dryCell(cell);
-            state.score += WATER.mopPoints;
-            state.pressure = Math.max(0, state.pressure - PRESSURE.mopDrop);
-            events |= EVENT_MOP;
-          }
-        } else {
-          player.mopProgress = 0;
-        }
-      }
-    } else {
-      player.mopProgress = 0;
-      state.repairing = false;
-    }
-
-    // Every open leak spreads water, one cell at a time.
-    for (const pipe of state.pipes) {
-      if (pipe.fixed) continue;
-      pipe.leakTimer -= dt;
-      if (pipe.leakTimer <= 0) {
-        pipe.leakTimer += WATER.spreadInterval;
-        if (harmless && state.wetCells < 60) spreadWater();
-        else if (!harmless) spreadWater();
-      }
-    }
-
-    // Fixed pipes let their water drain away, a cell at a time.
-    if (!harmless && state.fixedCount > 0 && wetList.length > 0) {
-      state.drainTimer -= dt;
-      if (state.drainTimer <= 0) {
-        state.drainTimer += WATER.drainInterval;
-        dryCell(wetList[Math.floor(random() * wetList.length)]);
-      }
-    }
-
-    state.flood = (state.wetCells / map.floorCells) * 100;
-
-    if (!harmless) {
-      // Pressure: the wanted-style gauge. Leaks and flood push it up; fixes
-      // and mopping push it down. High pressure bursts new pipes.
-      const activeLeaks = state.burstCount - state.fixedCount;
-      state.pressure += (activeLeaks * PRESSURE.leakPerSecond + state.flood * PRESSURE.floodPerSecond) * dt;
-      state.pressure = Math.max(0, Math.min(100, state.pressure));
-      const tier = pressureTier(state.pressure);
-      if (tier > state.tier && tier === PRESSURE.tiers.length - 1) events |= EVENT_ALARM;
-      state.tier = tier;
-      if (state.pressure >= PIPE.extraBurstAtPressure && state.burstCount < PIPE.maxBurst && state.spares.length > 0) {
-        state.extraBurstTimer -= dt;
-        if (state.extraBurstTimer <= 0) {
-          state.extraBurstTimer = PIPE.extraBurstInterval;
-          const pipe = burstPipe(state.spares.shift());
-          state.pipes.push(pipe);
-          state.burstCount += 1;
-          seedPuddle(pipe);
-          spawnParticles(pipe.x, pipe.y, '#e5534b', 12, 140);
-          events |= EVENT_BURST;
-        }
-      }
-
-      // The clock: run out with pipes still burst and the shift is lost.
-      state.timeLeft -= dt;
-      if (state.timeLeft <= 0) {
-        state.timeLeft = 0;
-        if (state.fixedCount < state.burstCount) {
-          state.over = true;
-          state.overReason = 'time';
-          events |= EVENT_OVER;
-        }
-      }
-
-      // Fix every burst pipe and the shift is won, with a time bonus.
-      if (!state.over && state.fixedCount === state.burstCount && state.burstCount > 0) {
-        state.won = true;
-        state.score += Math.ceil(state.timeLeft) * SCORE.winTimeBonus;
-        events |= EVENT_WIN;
-      }
-
-      // Too much water and the building floods.
-      if (!state.over && !state.won && state.flood >= WATER.floodLose) {
-        state.over = true;
-        state.overReason = 'flood';
-        events |= EVENT_OVER;
-      }
-    }
-
-    // Particles drift and fade.
-    for (let i = particles.length - 1; i >= 0; i -= 1) {
-      const p = particles[i];
-      p.life -= dt;
-      if (p.life <= 0) {
-        particles[i] = particles[particles.length - 1];
-        particles.pop();
-        continue;
-      }
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.vy += 160 * dt;
-    }
-    return events;
-  }
-
-  /** Distance to the nearest open leak, for the hiss volume; Infinity when dry. */
-  function nearestLeakDistance() {
-    let best = Infinity;
-    for (const pipe of state.pipes) {
-      if (pipe.fixed) continue;
-      best = Math.min(best, distance(player.x, player.y, pipe.x, pipe.y));
-    }
-    return best;
-  }
-
-  reset();
-  return { state, reset, step, nearestLeakDistance };
 }
