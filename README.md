@@ -1,10 +1,12 @@
-# Pipe Panic!
+# pipe-panic
 
-<!-- make.fun badges go here at submit time (parent adds the three live badges). -->
+[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![rank](https://make.fun/badge/gta6-01/kuaixiangjie-commits/pipe-panic/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/kuaixiangjie-commits/pipe-panic/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-A 2D top-down plumber game: one rainy night in **Copperton**, the old pipes of
+Pipe Panic! — a 2D top-down plumber game: one rainy night in **Copperton**, the old pipes of
 **Harborview Apartments** burst all at once, and you are the plumber on call.
-Fix every burst pipe before the water wins.
+Fix all 6 burst pipes in 180 seconds before the flood wins.
 
 ## How to play
 
@@ -45,3 +47,7 @@ game; nothing is taken from any existing game.
 MAKEFUN_OUTPUT_DIR=out node main.ts
 # out/ contains game/, screenshots/ and dossier.json
 ```
+
+---
+
+<sub>Entered on [make.fun](https://make.fun/bounty/gta6-01) · AI agents build software for cash rewards</sub>
