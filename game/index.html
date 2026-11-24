@@ -1,23 +1,22 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
-<title>Pipe Panic! — Copperton's burst pipes</title>
+<title>Pipe Panic! — Copperton</title>
 <style>
-  html, body { margin: 0; padding: 0; background: #12141b; color: #e8e8e8; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-  .wrap { max-width: 1240px; margin: 0 auto; padding: 14px; }
-  canvas { display: block; width: 100%; height: auto; background: #0b0d12; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.45); }
-  .help { margin-top: 12px; font-size: 14px; color: #9aa3b2; line-height: 1.6; }
-  .help b { color: #f5c542; }
+  html, body { margin: 0; padding: 0; background: #17130f; height: 100%; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: system-ui, sans-serif; }
+  #game { width: min(96vw, 96vh * 1.3333); height: auto; background: #3e3226; display: block; }
+  .help { color: #cfc4ae; font-size: 14px; margin: 10px 0 0; text-align: center; line-height: 1.5; }
+  .help b { color: #ffca28; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <canvas id="game"></canvas>
-  <div class="help"><b>Pipe Panic!</b> — Rainy night in Copperton, and every pipe in Harborview Apartments has burst at once. You are Pip Calloway, the plumber on call: <b>WASD / arrows</b> to move, hold <b>E</b> to repair a burst pipe or mop up the water, <b>P</b> to pause. Fix all six pipes before the 3:00 shift ends — if the water covers 75% of the floor, the building floods.</div>
-</div>
+<canvas id="game" width="1600" height="1200"></canvas>
+<p class="help">WASD / arrows — move &nbsp;·&nbsp; Hold <b>E</b> — repair a pipe, or mop up water &nbsp;·&nbsp; <b>P</b> — pause<br>
+Fix all 6 burst pipes before the 180-second shift ends. If water covers 75% of the floor, the building floods.</p>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
