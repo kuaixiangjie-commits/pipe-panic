@@ -1,39 +1,35 @@
-// Tiny static file server for local testing: serves the repo root on :8080.
-import { createServer } from "node:http";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, extname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import http from 'node:http';
+import { readFileSync, existsSync } from 'node:fs';
+import { join, extname, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = dirname(fileURLToPath(import.meta.url));
-const TYPES = {
-  ".html": "text/html",
-  ".js": "text/javascript",
-  ".mjs": "text/javascript",
-  ".json": "application/json",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".css": "text/css",
-  ".ts": "text/plain",
+const root = fileURLToPath(new URL('.', import.meta.url));
+const types: Record<string, string> = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.json': 'application/json',
+  '.jpg': 'image/jpeg',
+  '.css': 'text/css',
 };
+const port = Number(process.env.PORT || 8905);
 
-const server = createServer((req, res) => {
-  const path = decodeURIComponent(new URL(req.url || "/", "http://x").pathname);
-  // The game lives under game/, so send the root to its page (a redirect,
-  // so the page's relative module paths still resolve under /game/).
-  if (path === "/") {
-    res.writeHead(302, { location: "/game/index.html" });
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url || '/', 'http://127.0.0.1');
+  if (url.pathname === '/') {
+    res.writeHead(302, { Location: '/game/index.html' });
     res.end();
     return;
   }
-  const file = join(root, path);
-  if (!existsSync(file) || !statSync(file).isFile()) {
-    res.writeHead(404, { "content-type": "text/plain" });
-    res.end("not found");
+  const rel = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[\/\\])+/, '').replace(/^[/\\]/, '');
+  const file = join(root, rel);
+  if (!existsSync(file)) {
+    res.writeHead(404);
+    res.end('not found');
     return;
   }
-  res.writeHead(200, { "content-type": TYPES[extname(file)] || "application/octet-stream" });
+  res.writeHead(200, { 'Content-Type': types[extname(file)] || 'application/octet-stream' });
   res.end(readFileSync(file));
 });
 
-server.listen(8080, () => console.log("serving http://localhost:8080/"));
+server.listen(port, '127.0.0.1', () => console.log('serving on ' + port));

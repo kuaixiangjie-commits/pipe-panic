@@ -1,26 +1,24 @@
-// Pipe Panic! — submission entrypoint.
-// Copies game/ and screenshots/ into the output directory and writes
-// dossier.json exactly as the kit library buildDossier writes it.
-import { cpSync, mkdirSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import { buildDossier } from "./vendor/makefun-game.ts";
+import { buildDossier } from './vendor/makefun-game.ts';
+import { cpSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join, isAbsolute } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = dirname(fileURLToPath(import.meta.url));
-const outName = process.env.MAKEFUN_OUTPUT_DIR || "/output";
-const outDir = isAbsolute(outName) ? outName : resolve(root, outName);
+const here = fileURLToPath(new URL('.', import.meta.url));
+const out =
+  process.env.MAKEFUN_OUTPUT_DIR && isAbsolute(process.env.MAKEFUN_OUTPUT_DIR)
+    ? process.env.MAKEFUN_OUTPUT_DIR
+    : '/output';
 
-mkdirSync(outDir, { recursive: true });
-cpSync(join(root, "game"), join(outDir, "game"), { recursive: true });
-cpSync(join(root, "screenshots"), join(outDir, "screenshots"), { recursive: true });
+mkdirSync(out, { recursive: true });
+cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
+cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
 writeFileSync(
-  join(outDir, "dossier.json"),
-  buildDossier(outDir, {
+  join(out, 'dossier.json'),
+  buildDossier(out, {
     text_max_bytes: 163840,
     screenshots: { max: 4, max_bytes: 262144 },
     game_max_files: 993,
     game_max_bytes: 50331648,
     game_path_max_bytes: 1000,
-  }),
+  })
 );
-console.log(`wrote ${outDir} (dossier.json via buildDossier)`);

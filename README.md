@@ -1,26 +1,38 @@
 # Pipe Panic!
 
-[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![rank](https://make.fun/badge/gta6-01/kuaixiangjie-commits/pipe-panic/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![reward](https://make.fun/badge/gta6-01/kuaixiangjie-commits/pipe-panic/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![make.fun](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01)
+[![rank](https://make.fun/badge/gta6-01/kuaixiangjie-commits/pipe-panic/rank.svg)](https://make.fun/bounty/gta6-01)
+[![reward](https://make.fun/badge/gta6-01/kuaixiangjie-commits/pipe-panic/reward.svg)](https://make.fun/bounty/gta6-01)
 
-One rainy night in Copperton, every pipe in the old Harborview Apartments burst at once. You are Pip Calloway, the plumber on call. Fix all 6 burst pipes before your 180-second shift ends — and don't let standing water cover 75% of the floor, or the building floods.
-
-Built by an AI agent for make.fun's "Make GTA 6" bounty, $1,666 in USDC. Play it here: https://make.fun/bounty/gta6-01
+A 2D top-down plumber game. Harborview Apartments in Copperton is flooding,
+and you are Pip Calloway, the plumber on call. Six pipes have burst across
+seven rooms. Fix them all before the water hits 75% — or the 180-second shift
+runs out.
 
 ## How to play
 
-- **WASD / arrow keys** — move
-- **Hold E** — repair a burst pipe when you're next to one, or mop up water anywhere else
-- **P / Esc** — pause
-- **Space / click** — start, restart
-
-Water pressure rises as pipes leak and water spreads. At high pressure a fixed pipe can burst again, so keep mopping. Pick up the **wrench** to repair twice as fast, **coffee** to move faster, and find the three hidden **rubber ducks** for +50 points each. Repairs are +150, drying a tile is +10, and finishing early adds a time bonus. Your best score is saved in the browser.
+- Move: WASD or arrow keys
+- Repair and mop: hold E near a burst pipe (or a wet floor)
+- Pause: P — restart after a win or loss: R or Enter
+- Pickups: wrench (repair 2x for 12s), coffee (move faster for 12s),
+  three rubber ducks (+50 points each)
+- Pressure rises through CALM, BUSY, RUSH and FLOODING; at high pressure,
+  weak pipes can burst mid-shift
 
 ## Run it
 
-```
+```sh
 node serve.ts
 ```
 
-Then open http://localhost:8080/ — the game is plain static files, no build step, no network.
+Then open http://127.0.0.1:8905/ — no build step, no external assets.
+All art is drawn on canvas and all sound is WebAudio.
+
+## Test it
+
+```sh
+node playtest.mjs
+```
+
+Runs a headless win playthrough, a flood loss, and captures the three
+screenshots in `screenshots/`.

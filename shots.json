@@ -1,1 +1,1 @@
-{"shots":[{"file":"screenshots/1-start.jpg","name":"start","query":"?shot=start&seed=7"},{"file":"screenshots/2-play.jpg","name":"play","query":"?shot=play&seed=7"},{"file":"screenshots/3-end.jpg","name":"end","query":"?shot=end&seed=7"}]}
+{"shots":[{"name":"1-start","seed":7,"shot":"start"},{"name":"2-play","seed":7,"shot":"play"},{"name":"3-end","seed":7,"shot":"end"}]}
