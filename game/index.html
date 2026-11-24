@@ -4,19 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
-<title>Pipe Panic! — fix 6 burst pipes in 180 seconds</title>
+<title>Pipe Panic! — Copperton's burst pipes</title>
 <style>
-  html, body { margin: 0; padding: 0; background: #14171f; color: #e8e8e8; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-  .wrap { max-width: 1240px; margin: 0 auto; padding: 12px; }
-  canvas { display: block; width: 100%; height: auto; background: #0c0e13; border-radius: 10px; }
-  .note { margin-top: 10px; font-size: 13px; color: #9aa3b2; line-height: 1.5; }
-  .note b { color: #e8e8e8; }
+  html, body { margin: 0; padding: 0; background: #12141b; color: #e8e8e8; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 14px; }
+  canvas { display: block; width: 100%; height: auto; background: #0b0d12; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.45); }
+  .help { margin-top: 12px; font-size: 14px; color: #9aa3b2; line-height: 1.6; }
+  .help b { color: #f5c542; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <canvas id="game"></canvas>
-  <div class="note"><b>Pipe Panic!</b> — One rainy night in Copperton, every pipe in Harborview Apartments burst at once. You are Pip Calloway, the plumber on call. Move with <b>WASD / arrow keys</b>, hold <b>E</b> to repair a burst pipe or mop up water, <b>P</b> to pause. Fix all 6 pipes in 3:00 — if the water covers 75% of the floor, the building floods.</div>
+  <div class="help"><b>Pipe Panic!</b> — Rainy night in Copperton, and every pipe in Harborview Apartments has burst at once. You are Pip Calloway, the plumber on call: <b>WASD / arrows</b> to move, hold <b>E</b> to repair a burst pipe or mop up the water, <b>P</b> to pause. Fix all six pipes before the 3:00 shift ends — if the water covers 75% of the floor, the building floods.</div>
 </div>
 <script type="module" src="./src/main.js"></script>
 </body>
