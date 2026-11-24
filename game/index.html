@@ -3,20 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipe Panic!</title>
 <link rel="icon" href="data:,">
-<title>Pipe Panic! — Copperton</title>
 <style>
-  html, body { margin: 0; padding: 0; background: #17130f; height: 100%; }
-  body { display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: system-ui, sans-serif; }
-  #game { width: min(96vw, 96vh * 1.3333); height: auto; background: #3e3226; display: block; }
-  .help { color: #cfc4ae; font-size: 14px; margin: 10px 0 0; text-align: center; line-height: 1.5; }
-  .help b { color: #ffca28; }
+  html, body { margin: 0; padding: 0; background: #14171c; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { width: min(100vw, calc(100vh * 4 / 3)); height: auto; display: block; background: #000; }
 </style>
 </head>
 <body>
 <canvas id="game" width="1600" height="1200"></canvas>
-<p class="help">WASD / arrows — move &nbsp;·&nbsp; Hold <b>E</b> — repair a pipe, or mop up water &nbsp;·&nbsp; <b>P</b> — pause<br>
-Fix all 6 burst pipes before the 180-second shift ends. If water covers 75% of the floor, the building floods.</p>
-<script type="module" src="./src/main.js"></script>
+<script src="src/config.js"></script>
+<script src="src/random.js"></script>
+<script src="src/map.js"></script>
+<script src="src/world.js"></script>
+<script src="src/input.js"></script>
+<script src="src/render.js"></script>
+<script src="src/shots.js"></script>
+<script src="src/sound.js"></script>
+<script src="src/main.js"></script>
 </body>
 </html>
