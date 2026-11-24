@@ -1,5 +1,1 @@
-[
-  { "name": "1-start.jpg", "query": "?shot=start&seed=1" },
-  { "name": "2-play.jpg", "query": "?shot=play&seed=1" },
-  { "name": "3-end.jpg", "query": "?shot=end&seed=1" }
-]
+{"shots":[{"description":"Title screen over a staged scene: two pipes burst, a little water, Pip at the lobby door.","file":"1-start.jpg","id":"start","seed":7},{"description":"Mid-game: three pipes fixed, three burst, water spreading, 1:36 left, wrench active.","file":"2-play.jpg","id":"play","seed":7},{"description":"Win screen: all six pipes fixed, score with time bonus.","file":"3-end.jpg","id":"end","seed":7}]}
