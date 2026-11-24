@@ -1,4 +1,4 @@
-// Pipe Panic! — small deterministic random helpers (mulberry32).
+// Small seeded RNG (mulberry32) so staged scenes and re-bursts are deterministic.
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {

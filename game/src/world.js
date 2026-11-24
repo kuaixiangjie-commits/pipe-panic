@@ -1,163 +1,113 @@
-// Pipe Panic! — the game world: player, pipes, water, pressure, pickups,
-// scoring, and the win / lose rules. All coordinates are map coordinates
-// (0..1600, 0..1200); the renderer adds the HUD offset when drawing.
+// Pipe Panic! game state: movement + collision, water simulation, pressure,
+// repair / mop, pickups, re-bursts, and the win / lose rules.
 import {
-  BEST_KEY,
-  COFFEE_SPEED,
   COLS,
+  ROWS,
+  TILE,
+  SHIFT_SECONDS,
   FLOOD_COVERAGE,
+  PLAYER_R,
+  PLAYER_SPEED,
+  COFFEE_SPEED,
+  REPAIR_RANGE,
+  REPAIR_RATE,
+  WRENCH_RATE,
   MOP_RADIUS,
   MOP_RATE,
   PICKUP_DURATION,
-  PIPE_COUNT,
-  PLAYER_R,
-  PLAYER_SPEED,
-  POINTS_DUCK,
-  POINTS_MOP_PER_UNIT,
+  PICKUP_RADIUS,
   POINTS_REPAIR,
-  POINTS_TIME_BONUS,
-  PRESSURE_BUSY,
-  PRESSURE_CALM,
-  PRESSURE_RUSH,
-  REBURST_CHANCE,
-  REBURST_MIN_GAP,
-  REPAIR_RANGE,
-  REPAIR_RATE,
-  ROWS,
-  SHIFT_SECONDS,
-  TILE,
-  WATER_COVER_THRESHOLD,
-  WATER_DIFFUSE,
+  POINTS_DUCK,
+  POINTS_MOP_TILE,
+  TIME_BONUS_PER_SECOND,
+  PRESSURE_FIX_DROP,
   WATER_INJECT,
-  WRENCH_RATE,
+  WATER_DIFFUSE,
+  WATER_MOP_THRESHOLD,
+  PRESSURE_PER_LEAK,
+  PRESSURE_PER_COVERAGE,
+  PRESSURE_IDLE_DRAIN,
+  REBURST_AT,
+  REBURST_INTERVAL,
+  MAX_REBURSTS,
+  tierName,
 } from "./config.js";
-import { PIPES, PICKUPS, PLAYER_START, buildGrid, tileCenter } from "./map.js";
+import { buildGrid, PIPES, PICKUPS, PLAYER_START, tileCenter } from "./map.js";
+import { mulberry32 } from "./random.js";
+
+function countFloor(grid) {
+  let n = 0;
+  for (const row of grid) for (const v of row) if (v === 0) n++;
+  return n;
+}
+
+function loadBest() {
+  try {
+    return Number(localStorage.getItem("pipe-panic-best") || 0) || 0;
+  } catch {
+    return 0;
+  }
+}
 
 export class World {
-  constructor() {
+  constructor(seed) {
+    this.seed = seed >>> 0 || 1;
+    this.rng = mulberry32(this.seed);
     this.grid = buildGrid();
-    this.floor = new Uint8Array(COLS * ROWS);
-    this.floorTiles = 0;
-    for (let ty = 0; ty < ROWS; ty++) {
-      for (let tx = 0; tx < COLS; tx++) {
-        if (this.grid[ty][tx] === 0) {
-          this.floor[ty * COLS + tx] = 1;
-          this.floorTiles++;
-        }
-      }
-    }
+    this.floorTiles = countFloor(this.grid);
     this.water = new Float32Array(COLS * ROWS);
-    this.scratch = new Float32Array(COLS * ROWS);
-    this.best = 0;
-    try {
-      this.best = Number(localStorage.getItem(BEST_KEY)) || 0;
-    } catch {
-      this.best = 0;
-    }
-    this.time = 0; // render clock, always advances (drives animations)
-    this.frozen = false; // staged ?shot= scenes freeze the simulation
-    this.reset();
-    this.screen = "title";
-  }
-
-  // Fresh state. The caller sets `screen` afterwards.
-  reset() {
-    this.timeLeft = SHIFT_SECONDS;
-    this.score = 0;
-    this.timeBonus = 0;
-    this.mopAcc = 0;
-    this.pressure = 0;
-    this.pressureTier = "CALM";
-    this.reason = "";
-    this.won = false;
-    this.lost = false;
-    this.elapsed = 0;
-    this.water.fill(0);
+    this.waterNext = new Float32Array(COLS * ROWS);
     this.pipes = PIPES.map((p) => {
       const c = tileCenter(p.tx, p.ty);
-      return {
-        id: p.id,
-        tx: p.tx,
-        ty: p.ty,
-        room: p.room,
-        x: c.x,
-        y: c.y,
-        burst: true,
-        progress: 0,
-      };
+      return { tx: p.tx, ty: p.ty, x: c.x, y: c.y, room: p.room, burst: true, progress: 0 };
     });
     this.pickups = PICKUPS.map((p) => {
       const c = tileCenter(p.tx, p.ty);
-      return { kind: p.kind, tx: p.tx, ty: p.ty, x: c.x, y: c.y, taken: false };
+      return { tx: p.tx, ty: p.ty, x: c.x, y: c.y, kind: p.kind, taken: false };
     });
     const s = tileCenter(PLAYER_START.tx, PLAYER_START.ty);
-    this.player = { x: s.x, y: s.y, r: PLAYER_R, face: 1, moving: false };
-    this.wrenchTime = 0;
-    this.coffeeTime = 0;
-    this.lastReburst = 0;
-    this.repairTarget = null;
-    this.mopping = false;
-    this.repairFx = 0;
-    this.mopFx = 0;
-    this.alarmAt = 0;
-    this.frozen = false;
+    this.player = { x: s.x, y: s.y, r: PLAYER_R };
+    this.effects = { wrench: 0, coffee: 0 };
+    this.score = 0;
+    this.ducks = 0;
+    this.timeLeft = SHIFT_SECONDS;
+    this.pressure = 0;
+    this.coverage = 0;
+    this.screen = "title";
+    this.result = null; // 'win' | 'flood' | 'time'
+    this.timeBonus = 0;
+    this.reburstTimer = 0;
+    this.reburstCount = 0;
+    this.mopCredit = 0;
+    this.repairSoundAt = 0;
+    this.best = loadBest();
+    // Sound hooks, wired by main.js (optional).
+    this.onPickup = null;
+    this.onRepairTick = null;
+    this.onFixed = null;
+    this.onReburst = null;
+    this.onWin = null;
+    this.onLose = null;
   }
 
   start() {
-    this.reset();
     this.screen = "playing";
   }
 
-  get pipesFixed() {
-    let n = 0;
-    for (const p of this.pipes) if (!p.burst) n++;
-    return n;
+  solidAt(tx, ty) {
+    if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return true;
+    return this.grid[ty][tx] !== 0;
   }
 
-  coverage() {
-    let wet = 0;
-    for (let i = 0; i < this.water.length; i++) {
-      if (this.floor[i] && this.water[i] >= WATER_COVER_THRESHOLD) wet++;
-    }
-    return this.floorTiles === 0 ? 0 : wet / this.floorTiles;
-  }
-
-  tierFor(pressure) {
-    if (pressure < PRESSURE_CALM) return "CALM";
-    if (pressure < PRESSURE_BUSY) return "BUSY";
-    if (pressure < PRESSURE_RUSH) return "RUSH";
-    return "FLOODING";
-  }
-
-  // Set pressure from the current state at once (used to stage scenes).
-  settlePressure() {
-    const burst = this.pipes.filter((p) => p.burst).length;
-    this.pressure = 15 + 55 * this.coverage() + 6 * burst;
-    this.pressureTier = this.tierFor(this.pressure);
-  }
-
-  nearestBurstPipe(range) {
-    let bestPipe = null;
-    let bestD = Infinity;
-    for (const p of this.pipes) {
-      if (!p.burst) continue;
-      const d = Math.hypot(p.x - this.player.x, p.y - this.player.y);
-      if (d < bestD) {
-        bestD = d;
-        bestPipe = p;
-      }
-    }
-    return bestD <= range ? bestPipe : null;
-  }
-
-  hitsSolid(x, y, r) {
-    const x0 = Math.max(0, Math.floor((x - r) / TILE));
-    const x1 = Math.min(COLS - 1, Math.floor((x + r) / TILE));
-    const y0 = Math.max(0, Math.floor((y - r) / TILE));
-    const y1 = Math.min(ROWS - 1, Math.floor((y + r) / TILE));
+  // Circle-vs-tile collision test for a position.
+  collides(x, y, r) {
+    const x0 = Math.floor((x - r) / TILE);
+    const x1 = Math.floor((x + r) / TILE);
+    const y0 = Math.floor((y - r) / TILE);
+    const y1 = Math.floor((y + r) / TILE);
     for (let ty = y0; ty <= y1; ty++) {
       for (let tx = x0; tx <= x1; tx++) {
-        if (this.grid[ty][tx] === 0) continue;
+        if (!this.solidAt(tx, ty)) continue;
         const cx = Math.max(tx * TILE, Math.min(x, tx * TILE + TILE));
         const cy = Math.max(ty * TILE, Math.min(y, ty * TILE + TILE));
         const dx = x - cx;
@@ -168,31 +118,61 @@ export class World {
     return false;
   }
 
-  moveAxis(p, dx, dy) {
-    const nx = p.x + dx;
-    const ny = p.y + dy;
-    if (!this.hitsSolid(nx, ny, p.r)) {
-      p.x = nx;
-      p.y = ny;
-      return;
-    }
-    // Corner assist: the direct step is blocked (a wall corner or a door
-    // frame). Try the same step with a small sideways nudge so the plumber
-    // slides into a doorway instead of wedging on a corner. The nudge only
-    // applies when the nudged spot is clear, so it can never push the
-    // plumber through a gap too narrow to fit.
-    const steps = [3, 6, 9, 12];
-    for (const s of steps) {
-      for (const sign of [1, -1]) {
-        const ox = dx !== 0 ? 0 : s * sign;
-        const oy = dy !== 0 ? 0 : s * sign;
-        if (!this.hitsSolid(p.x + dx + ox, p.y + dy + oy, p.r)) {
-          p.x = p.x + dx + ox;
-          p.y = p.y + dy + oy;
+  // Move along one axis; when blocked, retry with small perpendicular nudges
+  // so the plumber slides around door-frame corners instead of wedging on them.
+  moveAxis(dx, dy) {
+    const p = this.player;
+    if (dx !== 0) {
+      if (!this.collides(p.x + dx, p.y, p.r)) {
+        p.x += dx;
+        return;
+      }
+      for (const n of [3, 6, 9, 12]) {
+        if (!this.collides(p.x + dx, p.y + n, p.r)) {
+          p.x += dx;
+          p.y += n;
+          return;
+        }
+        if (!this.collides(p.x + dx, p.y - n, p.r)) {
+          p.x += dx;
+          p.y -= n;
+          return;
+        }
+      }
+    } else if (dy !== 0) {
+      if (!this.collides(p.x, p.y + dy, p.r)) {
+        p.y += dy;
+        return;
+      }
+      for (const n of [3, 6, 9, 12]) {
+        if (!this.collides(p.x + n, p.y + dy, p.r)) {
+          p.x += n;
+          p.y += dy;
+          return;
+        }
+        if (!this.collides(p.x - n, p.y + dy, p.r)) {
+          p.x -= n;
+          p.y += dy;
           return;
         }
       }
     }
+  }
+
+  nearestBurstPipe() {
+    let best = null;
+    let bestD = REPAIR_RANGE * REPAIR_RANGE;
+    for (const p of this.pipes) {
+      if (!p.burst) continue;
+      const dx = p.x - this.player.x;
+      const dy = p.y - this.player.y;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best;
   }
 
   mop(dt) {
@@ -205,230 +185,217 @@ export class World {
     let removed = 0;
     for (let ty = y0; ty <= y1; ty++) {
       for (let tx = x0; tx <= x1; tx++) {
+        if (this.grid[ty][tx] !== 0) continue;
         const cx = tx * TILE + TILE / 2;
         const cy = ty * TILE + TILE / 2;
-        if (Math.hypot(cx - p.x, cy - p.y) > r) continue;
+        const dx = cx - p.x;
+        const dy = cy - p.y;
+        if (dx * dx + dy * dy > r * r) continue;
         const i = ty * COLS + tx;
         const take = Math.min(this.water[i], MOP_RATE * dt);
-        this.water[i] -= take;
-        removed += take;
+        if (take > 0) {
+          this.water[i] -= take;
+          removed += take;
+        }
       }
     }
-    return removed;
+    if (removed > 0) {
+      this.mopCredit += removed * POINTS_MOP_TILE;
+      const whole = Math.floor(this.mopCredit);
+      if (whole > 0) {
+        this.score += whole;
+        this.mopCredit -= whole;
+      }
+      this.pressure = Math.max(0, this.pressure - removed * 0.4);
+    }
   }
 
-  updateWater(dt) {
-    const w = this.water;
-    const s = this.scratch;
+  simulateWater(dt) {
+    const { water, waterNext } = this;
     for (const p of this.pipes) {
       if (!p.burst) continue;
       const i = p.ty * COLS + p.tx;
-      w[i] = Math.min(1, w[i] + WATER_INJECT * dt);
+      water[i] = Math.min(1, water[i] + WATER_INJECT * dt);
     }
-    const k = Math.min(1, WATER_DIFFUSE * dt);
+    waterNext.set(water);
+    const k = WATER_DIFFUSE * dt;
     for (let ty = 0; ty < ROWS; ty++) {
       for (let tx = 0; tx < COLS; tx++) {
         const i = ty * COLS + tx;
-        if (this.grid[ty][tx] !== 0) {
-          s[i] = 0;
-          continue;
+        const w = water[i];
+        if (w <= 0.01) continue;
+        if (this.grid[ty][tx] !== 0) continue;
+        const dirs = [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ];
+        for (const [dx, dy] of dirs) {
+          const nx = tx + dx;
+          const ny = ty + dy;
+          if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
+          if (this.grid[ny][nx] !== 0) continue;
+          const j = ny * COLS + nx;
+          const flow = Math.min(w * k * 0.25, Math.max(0, (w - water[j]) * 0.25));
+          if (flow > 0) {
+            waterNext[i] -= flow;
+            waterNext[j] += flow;
+          }
         }
-        let sum = w[i];
-        let n = 1;
-        if (tx > 0 && this.grid[ty][tx - 1] === 0) {
-          sum += w[i - 1];
-          n++;
-        }
-        if (tx < COLS - 1 && this.grid[ty][tx + 1] === 0) {
-          sum += w[i + 1];
-          n++;
-        }
-        if (ty > 0 && this.grid[ty - 1][tx] === 0) {
-          sum += w[i - COLS];
-          n++;
-        }
-        if (ty < ROWS - 1 && this.grid[ty + 1][tx] === 0) {
-          sum += w[i + COLS];
-          n++;
-        }
-        s[i] = w[i] + (sum / n - w[i]) * k;
       }
     }
-    this.water.set(s);
+    for (let i = 0; i < water.length; i++) {
+      water[i] = Math.max(0, Math.min(1, waterNext[i]));
+    }
+    let wet = 0;
+    for (let ty = 0; ty < ROWS; ty++) {
+      for (let tx = 0; tx < COLS; tx++) {
+        if (this.grid[ty][tx] === 0 && water[ty * COLS + tx] > WATER_MOP_THRESHOLD) wet++;
+      }
+    }
+    this.coverage = this.floorTiles === 0 ? 0 : wet / this.floorTiles;
+  }
+
+  update(dt, input) {
+    if (this.screen !== "playing") return;
+    this.timeLeft -= dt;
+    if (this.timeLeft <= 0) {
+      this.timeLeft = 0;
+      this.lose("time");
+      return;
+    }
+    if (this.effects.wrench > 0) this.effects.wrench = Math.max(0, this.effects.wrench - dt);
+    if (this.effects.coffee > 0) this.effects.coffee = Math.max(0, this.effects.coffee - dt);
+
+    const dir = input.dir();
+    const speed = this.effects.coffee > 0 ? COFFEE_SPEED : PLAYER_SPEED;
+    if (dir.x !== 0 || dir.y !== 0) {
+      this.moveAxis(dir.x * speed * dt, 0);
+      this.moveAxis(0, dir.y * speed * dt);
+    }
+
+    for (const pk of this.pickups) {
+      if (pk.taken) continue;
+      const dx = this.player.x - pk.x;
+      const dy = this.player.y - pk.y;
+      if (dx * dx + dy * dy < PICKUP_RADIUS * PICKUP_RADIUS) {
+        pk.taken = true;
+        if (pk.kind === "wrench") this.effects.wrench = PICKUP_DURATION;
+        else if (pk.kind === "coffee") this.effects.coffee = PICKUP_DURATION;
+        else if (pk.kind === "duck") {
+          this.ducks++;
+          this.score += POINTS_DUCK;
+        }
+        if (this.onPickup) this.onPickup(pk.kind);
+      }
+    }
+
+    if (input.isDown("KeyE")) {
+      const pipe = this.nearestBurstPipe();
+      if (pipe) {
+        const rate = this.effects.wrench > 0 ? WRENCH_RATE : REPAIR_RATE;
+        pipe.progress += rate * dt;
+        this.repairSoundAt += dt;
+        if (this.repairSoundAt > 0.22) {
+          this.repairSoundAt = 0;
+          if (this.onRepairTick) this.onRepairTick();
+        }
+        if (pipe.progress >= 1) {
+          pipe.burst = false;
+          pipe.progress = 1;
+          this.score += POINTS_REPAIR;
+          this.pressure = Math.max(0, this.pressure - PRESSURE_FIX_DROP);
+          if (this.onFixed) this.onFixed(pipe);
+          if (this.pipes.every((q) => !q.burst)) {
+            this.win();
+            return;
+          }
+        }
+      } else {
+        this.mop(dt);
+      }
+    }
+
+    this.simulateWater(dt);
+
+    const burstCount = this.pipes.filter((p) => p.burst).length;
+    this.pressure += (burstCount * PRESSURE_PER_LEAK + this.coverage * PRESSURE_PER_COVERAGE) * dt;
+    if (burstCount === 0) this.pressure -= PRESSURE_IDLE_DRAIN * dt;
+    this.pressure = Math.max(0, Math.min(100, this.pressure));
+
+    if (this.pressure >= REBURST_AT && this.reburstCount < MAX_REBURSTS) {
+      this.reburstTimer += dt;
+      if (this.reburstTimer >= REBURST_INTERVAL) {
+        this.reburstTimer = 0;
+        const fixed = this.pipes.filter((p) => !p.burst);
+        if (fixed.length > 0) {
+          const p = fixed[Math.floor(this.rng() * fixed.length)];
+          p.burst = true;
+          p.progress = 0;
+          this.reburstCount++;
+          if (this.onReburst) this.onReburst(p);
+        }
+      }
+    } else {
+      this.reburstTimer = 0;
+    }
+
+    if (this.coverage >= FLOOD_COVERAGE) this.lose("flood");
   }
 
   win() {
     this.screen = "win";
-    this.won = true;
-    this.timeBonus = Math.ceil(this.timeLeft) * POINTS_TIME_BONUS;
+    this.result = "win";
+    this.timeBonus = Math.ceil(this.timeLeft) * TIME_BONUS_PER_SECOND;
     this.score += this.timeBonus;
     this.saveBest();
+    if (this.onWin) this.onWin();
   }
 
   lose(reason) {
     this.screen = "lose";
-    this.lost = true;
-    this.reason = reason;
-    this.timeBonus = 0;
+    this.result = reason;
     this.saveBest();
+    if (this.onLose) this.onLose(reason);
   }
 
   saveBest() {
     if (this.score > this.best) {
       this.best = this.score;
       try {
-        localStorage.setItem(BEST_KEY, String(this.best));
+        localStorage.setItem("pipe-panic-best", String(this.best));
       } catch {
-        // Storage may be unavailable; the best score is a nicety.
+        // Storage unavailable (private mode, etc.) — best score just isn't kept.
       }
     }
   }
 
-  update(dt, input, sound) {
-    this.time += dt;
-    this.repairFx = Math.max(0, this.repairFx - dt);
-    this.mopFx = Math.max(0, this.mopFx - dt);
-    if (this.screen !== "playing" || this.frozen) return;
-
-    this.elapsed += dt;
-    this.timeLeft -= dt;
-    if (this.timeLeft <= 0) {
-      this.timeLeft = 0;
-      this.lose("time");
-      sound.lose();
-      return;
-    }
-    if (this.wrenchTime > 0) this.wrenchTime -= dt;
-    if (this.coffeeTime > 0) this.coffeeTime -= dt;
-
-    // Movement (axis-separated so the plumber slides along walls).
-    let dx = 0;
-    let dy = 0;
-    if (input.isDown("KeyA", "ArrowLeft")) dx -= 1;
-    if (input.isDown("KeyD", "ArrowRight")) dx += 1;
-    if (input.isDown("KeyW", "ArrowUp")) dy -= 1;
-    if (input.isDown("KeyS", "ArrowDown")) dy += 1;
-    const len = Math.hypot(dx, dy) || 1;
-    dx /= len;
-    dy /= len;
-    const speed = this.coffeeTime > 0 ? COFFEE_SPEED : PLAYER_SPEED;
-    const p = this.player;
-    p.moving = dx !== 0 || dy !== 0;
-    if (dx !== 0) p.face = dx > 0 ? 1 : -1;
-    this.moveAxis(p, dx * speed * dt, 0);
-    this.moveAxis(p, 0, dy * speed * dt);
-
-    // Hold E: repair a burst pipe nearby, or mop up water.
-    const eHeld = input.isDown("KeyE");
-    this.repairTarget = null;
-    this.mopping = false;
-    if (eHeld) {
-      const pipe = this.nearestBurstPipe(REPAIR_RANGE);
-      if (pipe) {
-        this.repairTarget = pipe;
-        const rate = this.wrenchTime > 0 ? WRENCH_RATE : REPAIR_RATE;
-        pipe.progress += rate * dt;
-        this.repairFx = 0.15;
-        sound.tick();
-        if (pipe.progress >= 1) {
-          pipe.burst = false;
-          pipe.progress = 0;
-          this.score += POINTS_REPAIR;
-          sound.fixed();
-          if (this.pipesFixed === PIPE_COUNT) {
-            this.win();
-            sound.win();
-            return;
-          }
-        }
-      } else {
-        this.mopping = true;
-        this.mopFx = 0.15;
-        const removed = this.mop(dt);
-        if (removed > 0) {
-          this.mopAcc += removed * POINTS_MOP_PER_UNIT;
-          if (this.mopAcc >= 1) {
-            const add = Math.floor(this.mopAcc);
-            this.score += add;
-            this.mopAcc -= add;
-          }
-        }
-      }
-    }
-
-    // Pickups.
-    for (const pk of this.pickups) {
-      if (pk.taken) continue;
-      const d = Math.hypot(pk.x - p.x, pk.y - p.y);
-      if (d < 30) {
-        pk.taken = true;
-        if (pk.kind === "wrench") {
-          this.wrenchTime = PICKUP_DURATION;
-          sound.pickup();
-        } else if (pk.kind === "coffee") {
-          this.coffeeTime = PICKUP_DURATION;
-          sound.pickup();
-        } else if (pk.kind === "duck") {
-          this.score += POINTS_DUCK;
-          sound.quack();
-        }
-      }
-    }
-
-    // Water spreads from every burst pipe.
-    this.updateWater(dt);
-    const cov = this.coverage();
-    if (cov >= FLOOD_COVERAGE) {
-      this.lose("flood");
-      sound.lose();
-      return;
-    }
-
-    // Pressure follows the water and the burst pipes.
-    const burstCount = this.pipes.filter((q) => q.burst).length;
-    const target = 15 + 55 * cov + 6 * burstCount;
-    this.pressure += (target - this.pressure) * Math.min(1, 0.4 * dt);
-    this.pressureTier = this.tierFor(this.pressure);
-    if (this.pressureTier === "FLOODING" && this.time - this.alarmAt > 2.5) {
-      this.alarmAt = this.time;
-      sound.alarm();
-    }
-
-    // At high pressure a repaired pipe can burst again mid-shift.
-    if (this.pressure >= PRESSURE_RUSH && this.elapsed - this.lastReburst > REBURST_MIN_GAP) {
-      const fixed = this.pipes.filter((q) => !q.burst);
-      if (fixed.length > 0 && Math.random() < REBURST_CHANCE * dt) {
-        const pick = fixed[Math.floor(Math.random() * fixed.length)];
-        pick.burst = true;
-        pick.progress = 0;
-        this.lastReburst = this.elapsed;
-      }
-    }
-  }
-
-  // Plain snapshot for the autopilot / debugging (no methods, no cycles).
   snapshot() {
     return {
       screen: this.screen,
-      timeLeft: Math.ceil(this.timeLeft),
+      result: this.result,
       score: this.score,
       best: this.best,
-      pipesFixed: this.pipesFixed,
+      timeLeft: Math.round(this.timeLeft * 10) / 10,
+      pipesFixed: this.pipes.filter((p) => !p.burst).length,
       pipes: this.pipes.map((p) => ({
         x: p.x,
         y: p.y,
-        tx: p.tx,
-        ty: p.ty,
         burst: p.burst,
-        progress: p.progress,
+        progress: Math.round(p.progress * 100) / 100,
       })),
-      player: { x: this.player.x, y: this.player.y },
-      coverage: this.coverage(),
-      pressure: this.pressure,
-      tier: this.pressureTier,
-      reason: this.reason,
-      wrenchTime: Math.max(0, this.wrenchTime),
-      coffeeTime: Math.max(0, this.coffeeTime),
+      player: { x: Math.round(this.player.x), y: Math.round(this.player.y) },
+      pressure: Math.round(this.pressure),
+      tier: tierName(this.pressure),
+      coverage: Math.round(this.coverage * 1000) / 1000,
+      ducks: this.ducks,
+      effects: {
+        wrench: Math.round(this.effects.wrench * 10) / 10,
+        coffee: Math.round(this.effects.coffee * 10) / 10,
+      },
+      tile: TILE,
+      grid: this.grid,
     };
   }
 }
