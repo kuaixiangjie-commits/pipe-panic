@@ -1,375 +1,250 @@
-// Pipe Panic! — canvas rendering: rooms, water, pipes, pickups, the
-// plumber, HUD, minimap, and the five screens. All art is hand-drawn
-// shapes; nothing is loaded from the network.
-import { CONFIG } from './config.js';
-import * as MAP from './map.js';
+function render(ctx, w, screen) {
+  const T = CONFIG.TILE;
+  ctx.clearRect(0, 0, CONFIG.WIDTH, CONFIG.HEIGHT);
 
-const { COLS, ROWS, TILE, WIDTH, HEIGHT } = CONFIG;
-
-function fmtTime(seconds) {
-  const s = Math.max(0, Math.ceil(seconds));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
-function drawRooms(ctx) {
-  for (const room of MAP.ROOMS) {
+  for (const room of ROOMS) {
     ctx.fillStyle = room.color;
-    ctx.fillRect(room.x * TILE, room.y * TILE, room.w * TILE, room.h * TILE);
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.font = '13px system-ui, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(room.name, room.x * TILE + 8, room.y * TILE + 18);
+    ctx.fillRect(room.x * T, room.y * T, room.w * T, room.h * T);
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText(room.name, room.x * T + 10, room.y * T + 22);
   }
-}
 
-function drawWalls(ctx) {
-  ctx.fillStyle = '#5d4a36';
-  for (let ty = 0; ty < ROWS; ty++) {
-    for (let tx = 0; tx < COLS; tx++) {
-      if (MAP.isWallTile(tx, ty)) ctx.fillRect(tx * TILE, ty * TILE, TILE, TILE);
-    }
-  }
-  // Wall caps: a lighter top edge so walls read as walls.
-  ctx.fillStyle = 'rgba(255,255,255,0.12)';
-  for (let ty = 0; ty < ROWS; ty++) {
-    for (let tx = 0; tx < COLS; tx++) {
-      if (MAP.isWallTile(tx, ty) && !MAP.isWallTile(tx, ty + 1)) {
-        ctx.fillRect(tx * TILE, (ty + 1) * TILE - 4, TILE, 4);
+  for (let ty = 0; ty < CONFIG.ROWS; ty++) {
+    for (let tx = 0; tx < CONFIG.COLS; tx++) {
+      if (isWetTile(w, tx, ty)) {
+        ctx.fillStyle = 'rgba(40,110,220,0.35)';
+        ctx.fillRect(tx * T, ty * T, T, T);
       }
     }
   }
-}
 
-function drawFurniture(ctx) {
-  for (const f of MAP.FURNITURE) {
-    const x = f.x * TILE;
-    const y = f.y * TILE;
-    const w = f.w * TILE;
-    const h = f.h * TILE;
-    ctx.fillStyle = '#8a6d4b';
-    ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
-    ctx.strokeStyle = '#6b4f30';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
-    if (f.label === 'washer' || f.label === 'dryer') {
-      ctx.fillStyle = '#cfd8dc';
-      ctx.beginPath();
-      ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) / 2 - 4, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (f.label === 'plant') {
-      ctx.fillStyle = '#2e7d32';
-      ctx.beginPath();
-      ctx.arc(x + w / 2, y + h / 2, 10, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (f.label === 'tv') {
-      ctx.fillStyle = '#263238';
-      ctx.fillRect(x + 4, y + 4, w - 8, h - 8);
-    }
+  for (const f of FURNITURE) {
+    ctx.fillStyle = f.color;
+    ctx.fillRect(f.x * T + 2, f.y * T + 2, f.w * T - 4, f.h * T - 4);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.font = '11px sans-serif';
+    ctx.fillText(f.label, f.x * T + 6, f.y * T + f.h * T - 6);
   }
-}
 
-function drawWater(ctx, w) {
-  for (let ty = 0; ty < ROWS; ty++) {
-    for (let tx = 0; tx < COLS; tx++) {
-      const level = w.water[ty * COLS + tx];
-      if (level <= 0.02) continue;
-      const a = 0.2 + 0.55 * level;
-      ctx.fillStyle = `rgba(30,110,200,${a.toFixed(2)})`;
-      ctx.fillRect(tx * TILE + 1, ty * TILE + 1, TILE - 2, TILE - 2);
-      if (level > 0.6) {
-        ctx.fillStyle = 'rgba(180,220,255,0.5)';
-        ctx.fillRect(tx * TILE + 8, ty * TILE + 8, 6, 6);
-      }
-    }
-  }
-}
-
-function drawPipes(ctx, w) {
-  for (const p of w.pipes) {
-    // Pipe base.
-    ctx.fillStyle = '#9e9e9e';
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 11, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#616161';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    if (!p.fixed) {
-      // Burst: red ring, warning mark, and a spray that shivers.
-      ctx.strokeStyle = '#d32f2f';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
-      ctx.stroke();
-      const t = w.elapsed * 10 + p.id * 1.7;
-      ctx.strokeStyle = 'rgba(120,190,255,0.9)';
-      ctx.lineWidth = 2;
-      for (let k = 0; k < 5; k++) {
-        const a = (k / 5) * Math.PI * 2 + Math.sin(t) * 0.3;
-        const r0 = 15;
-        const r1 = 15 + 8 + Math.sin(t + k) * 3;
-        ctx.beginPath();
-        ctx.moveTo(p.x + Math.cos(a) * r0, p.y + Math.sin(a) * r0);
-        ctx.lineTo(p.x + Math.cos(a) * r1, p.y + Math.sin(a) * r1);
-        ctx.stroke();
-      }
-      ctx.fillStyle = '#d32f2f';
-      ctx.font = 'bold 16px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('!', p.x, p.y + 1);
-      // Repair progress ring.
-      if (p.progress > 0) {
-        ctx.strokeStyle = '#2e7d32';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 18, -Math.PI / 2, -Math.PI / 2 + p.progress * Math.PI * 2);
-        ctx.stroke();
-      }
-    } else {
-      // Fixed: green check.
-      ctx.fillStyle = '#2e7d32';
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 11, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(p.x - 5, p.y);
-      ctx.lineTo(p.x - 1, p.y + 4);
-      ctx.lineTo(p.x + 6, p.y - 4);
-      ctx.stroke();
-    }
-  }
-}
-
-function drawPickups(ctx, w) {
-  for (const pk of w.pickups) {
-    if (pk.taken) continue;
-    const bob = Math.sin(w.elapsed * 3 + pk.tx) * 2;
-    const x = pk.x;
-    const y = pk.y + bob;
-    if (pk.kind === 'wrench') {
-      ctx.strokeStyle = '#546e7a';
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(x - 7, y + 7);
-      ctx.lineTo(x + 7, y - 7);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(x + 7, y - 7, 5, 0, Math.PI * 2);
-      ctx.stroke();
-    } else if (pk.kind === 'coffee') {
-      ctx.fillStyle = '#6d4c41';
-      ctx.fillRect(x - 6, y - 5, 12, 12);
-      ctx.fillStyle = '#d7ccc8';
-      ctx.fillRect(x - 6, y - 7, 12, 3);
-      ctx.strokeStyle = '#6d4c41';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(x + 7, y + 1, 4, -Math.PI / 2, Math.PI / 2);
-      ctx.stroke();
-    } else {
-      // Rubber duck.
-      ctx.fillStyle = '#ffeb3b';
-      ctx.beginPath();
-      ctx.arc(x, y + 2, 8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(x + 4, y - 5, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#ff9800';
-      ctx.beginPath();
-      ctx.moveTo(x + 8, y - 6);
-      ctx.lineTo(x + 13, y - 4);
-      ctx.lineTo(x + 8, y - 2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#212121';
-      ctx.beginPath();
-      ctx.arc(x + 5, y - 6, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-}
-
-function drawPlayer(ctx, w) {
-  const p = w.player;
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.beginPath();
-  ctx.ellipse(p.x, p.y + 10, 12, 5, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Body: blue overalls.
-  ctx.fillStyle = '#1565c0';
-  ctx.beginPath();
-  ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
-  ctx.fill();
-  // Head.
-  ctx.fillStyle = '#ffcc9e';
-  ctx.beginPath();
-  ctx.arc(p.x, p.y - 4, 7, 0, Math.PI * 2);
-  ctx.fill();
-  // Red cap.
-  ctx.fillStyle = '#d32f2f';
-  ctx.beginPath();
-  ctx.arc(p.x, p.y - 4, 7, Math.PI, 0);
-  ctx.fill();
-  ctx.fillRect(p.x - 7, p.y - 5, 14, 2);
-  // Facing tick.
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  ctx.arc(p.x + p.dir * 8, p.y + 2, 2, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawHud(ctx, w) {
-  ctx.fillStyle = 'rgba(20,20,20,0.72)';
-  ctx.fillRect(0, 0, WIDTH, 38);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 19px system-ui, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  const fixed = w.pipes.filter((p) => p.fixed).length;
-  ctx.fillText(`SCORE ${w.score}`, 14, 20);
-  ctx.fillText(`TIME ${fmtTime(w.timeLeft)}`, 220, 20);
-  ctx.fillText(`PIPES ${fixed}/${w.pipes.length}`, 380, 20);
-  // Pressure gauge.
-  const gx = 560;
-  const gw = 220;
-  ctx.fillStyle = '#424242';
-  ctx.fillRect(gx, 12, gw, 14);
-  const pw = Math.round((gw * w.pressure) / 100);
-  ctx.fillStyle = w.pressure < 25 ? '#66bb6a' : w.pressure < 50 ? '#ffee58' : w.pressure < 75 ? '#ffa726' : '#ef5350';
-  ctx.fillRect(gx, 12, pw, 14);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(`${w.pressureTier} ${Math.round(w.pressure)}`, gx + gw + 10, 20);
-  ctx.fillText(`WATER ${Math.round(w.coverage * 100)}%`, 950, 20);
-  ctx.fillText(`DUCKS ${w.ducksGot}/3`, 1130, 20);
-  if (w.elapsed < w.wrenchUntil) {
-    ctx.fillStyle = '#90caf9';
-    ctx.fillText(`WRENCH ${Math.ceil(w.wrenchUntil - w.elapsed)}s`, 1290, 20);
-  }
-  if (w.elapsed < w.coffeeUntil) {
-    ctx.fillStyle = '#ffcc80';
-    ctx.fillText(`COFFEE ${Math.ceil(w.coffeeUntil - w.elapsed)}s`, 1440, 20);
-  }
-  // Toast message.
-  if (w.message && w.elapsed < w.messageUntil) {
-    ctx.font = 'bold 20px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(20,20,20,0.7)';
-    const tw = ctx.measureText(w.message).width + 28;
-    ctx.fillRect((WIDTH - tw) / 2, 48, tw, 32);
-    ctx.fillStyle = '#fff176';
-    ctx.fillText(w.message, WIDTH / 2, 65);
-  }
-}
-
-function drawMinimap(ctx, w) {
-  const scale = 0.11;
-  const mw = COLS * TILE * scale;
-  const mh = ROWS * TILE * scale;
-  const ox = WIDTH - mw - 14;
-  const oy = HEIGHT - mh - 14;
-  ctx.fillStyle = 'rgba(20,20,20,0.6)';
-  ctx.fillRect(ox - 4, oy - 4, mw + 8, mh + 8);
-  for (const room of MAP.ROOMS) {
-    ctx.fillStyle = '#9e9e9e';
-    ctx.fillRect(ox + room.x * TILE * scale, oy + room.y * TILE * scale, room.w * TILE * scale, room.h * TILE * scale);
-  }
-  for (let ty = 0; ty < ROWS; ty++) {
-    for (let tx = 0; tx < COLS; tx++) {
-      if (w.water[ty * COLS + tx] > CONFIG.WATER_COVER_THRESHOLD) {
-        ctx.fillStyle = '#1e78c8';
-        ctx.fillRect(ox + tx * TILE * scale, oy + ty * TILE * scale, TILE * scale, TILE * scale);
-      }
-    }
-  }
-  for (const p of w.pipes) {
-    ctx.fillStyle = p.fixed ? '#66bb6a' : '#ef5350';
-    ctx.beginPath();
-    ctx.arc(ox + p.x * scale, oy + p.y * scale, 3, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  ctx.arc(ox + w.player.x * scale, oy + w.player.y * scale, 3.5, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function overlay(ctx, title, lines, accent) {
-  ctx.fillStyle = 'rgba(15,15,25,0.72)';
-  ctx.fillRect(0, 0, WIDTH, HEIGHT);
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = accent;
-  ctx.font = 'bold 72px system-ui, sans-serif';
-  ctx.fillText(title, WIDTH / 2, HEIGHT / 2 - 130);
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '24px system-ui, sans-serif';
-  lines.forEach((line, i) => {
-    ctx.fillText(line, WIDTH / 2, HEIGHT / 2 - 50 + i * 38);
+  ctx.fillStyle = '#3a3f46';
+  w.map.walls.forEach((k) => {
+    const [tx, ty] = k.split(',').map(Number);
+    ctx.fillRect(tx * T, ty * T, T, T);
   });
-}
 
-export function render(ctx, w) {
-  ctx.clearRect(0, 0, WIDTH, HEIGHT);
-  ctx.fillStyle = '#3e3226';
-  ctx.fillRect(0, 0, WIDTH, HEIGHT);
-  drawRooms(ctx);
-  drawWalls(ctx);
-  drawFurniture(ctx);
-  drawWater(ctx, w);
-  drawPipes(ctx, w);
-  drawPickups(ctx, w);
-  drawPlayer(ctx, w);
+  for (const p of w.pipes) {
+    const cx = p.x * T + T / 2;
+    const cy = p.y * T + T / 2;
+    if (p.state === 'burst') {
+      ctx.fillStyle = '#1d6fd1';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#9ecfff';
+      ctx.lineWidth = 3;
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2 + w.elapsed * 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(a) * 22, cy + Math.sin(a) * 22);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText('!', cx - 3, cy + 4);
+    } else if (p.state === 'fixed') {
+      ctx.fillStyle = '#5a9e4b';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(cx - 5, cy);
+      ctx.lineTo(cx - 1, cy + 5);
+      ctx.lineTo(cx + 6, cy - 5);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = '#8a939c';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (p.state === 'burst' && p.progress > 0) {
+      ctx.fillStyle = '#222';
+      ctx.fillRect(cx - 16, cy - 24, 32, 6);
+      ctx.fillStyle = '#ffd23e';
+      ctx.fillRect(cx - 15, cy - 23, 30 * p.progress, 4);
+    }
+  }
+
+  if (!w.wrenchTaken) {
+    const wx = PICKUP_SPOTS.wrench.x * T + T / 2;
+    const wy = PICKUP_SPOTS.wrench.y * T + T / 2;
+    ctx.fillStyle = '#ffd23e';
+    ctx.beginPath();
+    ctx.arc(wx, wy, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#222';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('W', wx - 5, wy + 5);
+  }
+  if (!w.coffeeTaken) {
+    const cx = PICKUP_SPOTS.coffee.x * T + T / 2;
+    const cy = PICKUP_SPOTS.coffee.y * T + T / 2;
+    ctx.fillStyle = '#7a4a21';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('C', cx - 5, cy + 5);
+  }
+  PICKUP_SPOTS.ducks.forEach((d, i) => {
+    if (w.ducksTaken[i]) return;
+    const dx = d.x * T + T / 2;
+    const dy = d.y * T + T / 2;
+    ctx.fillStyle = '#ffe14d';
+    ctx.beginPath();
+    ctx.arc(dx, dy, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ff8c1a';
+    ctx.beginPath();
+    ctx.moveTo(dx + 8, dy - 2);
+    ctx.lineTo(dx + 15, dy + 2);
+    ctx.lineTo(dx + 8, dy + 5);
+    ctx.fill();
+    ctx.fillStyle = '#222';
+    ctx.beginPath();
+    ctx.arc(dx + 3, dy - 3, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  const p = w.player;
+  ctx.fillStyle = '#e86a1c';
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#2b6fd1';
+  ctx.beginPath();
+  ctx.arc(p.x, p.y - 4, 10, Math.PI, 0);
+  ctx.fill();
+  ctx.fillRect(p.x - 10, p.y - 6, 20, 4);
+  ctx.fillStyle = '#222';
+  ctx.beginPath();
+  ctx.arc(p.x - 4, p.y + 2, 2, 0, Math.PI * 2);
+  ctx.arc(p.x + 4, p.y + 2, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (w.water > 0.5) {
+    ctx.fillStyle = 'rgba(30,100,220,' + Math.min(0.28, w.water / 100 * 0.28) + ')';
+    ctx.fillRect(0, 0, CONFIG.WIDTH, CONFIG.HEIGHT);
+  }
+
   drawHud(ctx, w);
   drawMinimap(ctx, w);
 
-  if (w.screen === 'title') {
-    overlay(
-      ctx,
-      'PIPE PANIC!',
-      [
-        'One rainy night in Copperton, every pipe in Harborview Apartments burst at once.',
-        'You are Pip Calloway, the plumber on call. Fix all 6 burst pipes before your 180-second shift ends.',
-        '',
-        'WASD / arrows — move    Hold E — repair a pipe, or mop up water',
-        'P / Esc — pause    Wrench repairs 2x faster    Coffee makes you faster    Ducks are +50',
-        'If standing water covers 75% of the floor, the building floods.',
-        '',
-        `Best score: ${w.best}`,
-        'Press SPACE to start',
-      ],
-      '#ffca28',
-    );
-  } else if (w.screen === 'paused') {
-    overlay(ctx, 'PAUSED', ['Press P or Esc to get back to work.'], '#90caf9');
-  } else if (w.screen === 'win') {
-    overlay(
-      ctx,
-      'SHIFT COMPLETE!',
-      [
-        `All 6 pipes fixed with ${fmtTime(w.timeLeft)} to spare.`,
-        `Score: ${w.score}    Best: ${w.best}`,
-        '',
-        'Press SPACE to play again',
-      ],
-      '#66bb6a',
-    );
-  } else if (w.screen === 'lose') {
-    overlay(
-      ctx,
-      w.loseReason === 'flood' ? 'THE BUILDING FLOODED' : 'OUT OF TIME',
-      [
-        w.loseReason === 'flood'
-          ? 'Standing water covered 75% of the floor.'
-          : 'The 180-second shift ran out with pipes still burst.',
-        `Score: ${w.score}    Best: ${w.best}`,
-        '',
-        'Press SPACE to try again',
-      ],
-      '#ef5350',
-    );
+  if (screen === 'title') drawTitle(ctx, w);
+  else if (screen === 'paused') drawOverlay(ctx, 'PAUSED', 'Press P to resume');
+  else if (screen === 'win') drawEnd(ctx, w, true);
+  else if (screen === 'lose') drawEnd(ctx, w, false);
+}
+
+function drawHud(ctx, w) {
+  ctx.fillStyle = 'rgba(15,18,24,0.92)';
+  ctx.fillRect(0, 0, CONFIG.WIDTH, 46);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 20px sans-serif';
+  const mins = Math.floor(w.timeLeft / 60);
+  const secs = Math.floor(w.timeLeft % 60);
+  const timeStr = mins + ':' + String(secs).padStart(2, '0');
+  const tier = tierFor(w.elapsed);
+  ctx.fillText('SCORE ' + w.score, 16, 31);
+  ctx.fillText('TIME ' + timeStr, 220, 31);
+  ctx.fillText('PIPES ' + w.fixedInitial + '/6', 420, 31);
+  ctx.fillStyle = w.water >= 60 ? '#ff5a4d' : '#fff';
+  ctx.fillText('WATER ' + Math.floor(w.water) + '%', 600, 31);
+  ctx.fillStyle = tier.name === 'FLOODING' ? '#ff5a4d' : tier.name === 'RUSH' ? '#ffb13e' : '#fff';
+  ctx.fillText(tier.name, 800, 31);
+  ctx.fillStyle = '#ffd23e';
+  if (w.elapsed < w.wrenchUntil) ctx.fillText('WRENCH ' + Math.ceil(w.wrenchUntil - w.elapsed) + 's', 980, 31);
+  if (w.elapsed < w.coffeeUntil) ctx.fillText('COFFEE ' + Math.ceil(w.coffeeUntil - w.elapsed) + 's', 1140, 31);
+  ctx.fillStyle = '#ffe14d';
+  ctx.fillText('DUCKS ' + w.ducksGot + '/3', 1330, 31);
+}
+
+function drawMinimap(ctx, w) {
+  const mw = 200;
+  const mh = 150;
+  const mx = CONFIG.WIDTH - mw - 14;
+  const my = CONFIG.HEIGHT - mh - 14;
+  const sx = mw / CONFIG.WIDTH;
+  const sy = mh / CONFIG.HEIGHT;
+  ctx.fillStyle = 'rgba(15,18,24,0.85)';
+  ctx.fillRect(mx, my, mw, mh);
+  for (const room of ROOMS) {
+    ctx.fillStyle = room.color;
+    ctx.fillRect(mx + room.x * CONFIG.TILE * sx, my + room.y * CONFIG.TILE * sy, room.w * CONFIG.TILE * sx, room.h * CONFIG.TILE * sy);
   }
+  for (const p of w.pipes) {
+    if (p.state !== 'burst') continue;
+    ctx.fillStyle = '#ff2e1f';
+    ctx.beginPath();
+    ctx.arc(mx + (p.x + 0.5) * CONFIG.TILE * sx, my + (p.y + 0.5) * CONFIG.TILE * sy, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(mx + w.player.x * sx, my + w.player.y * sy, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawTitle(ctx, w) {
+  ctx.fillStyle = 'rgba(10,12,18,0.72)';
+  ctx.fillRect(0, 0, CONFIG.WIDTH, CONFIG.HEIGHT);
+  ctx.fillStyle = '#ffd23e';
+  ctx.font = 'bold 84px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('PIPE PANIC!', CONFIG.WIDTH / 2, 420);
+  ctx.fillStyle = '#fff';
+  ctx.font = '28px sans-serif';
+  ctx.fillText('Harborview Apartments is flooding. You are Pip Calloway, the plumber on call.', CONFIG.WIDTH / 2, 500);
+  ctx.fillText('Fix all 6 burst pipes before the water hits 75% — or the clock runs out.', CONFIG.WIDTH / 2, 545);
+  ctx.font = '24px sans-serif';
+  ctx.fillText('Move: WASD / Arrows    Repair & mop: hold E    Pause: P', CONFIG.WIDTH / 2, 630);
+  ctx.fillStyle = '#ffd23e';
+  ctx.font = 'bold 30px sans-serif';
+  ctx.fillText('Press ENTER to start your shift', CONFIG.WIDTH / 2, 720);
+  ctx.textAlign = 'left';
+}
+
+function drawOverlay(ctx, title, sub) {
+  ctx.fillStyle = 'rgba(10,12,18,0.6)';
+  ctx.fillRect(0, 0, CONFIG.WIDTH, CONFIG.HEIGHT);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 64px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(title, CONFIG.WIDTH / 2, 560);
+  ctx.font = '28px sans-serif';
+  ctx.fillText(sub, CONFIG.WIDTH / 2, 620);
+  ctx.textAlign = 'left';
+}
+
+function drawEnd(ctx, w, won) {
+  ctx.fillStyle = 'rgba(10,12,18,0.72)';
+  ctx.fillRect(0, 0, CONFIG.WIDTH, CONFIG.HEIGHT);
+  ctx.fillStyle = won ? '#7ddc5a' : '#ff5a4d';
+  ctx.font = 'bold 76px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(won ? 'SHIFT SAVED!' : 'FLOODED OUT!', CONFIG.WIDTH / 2, 460);
+  ctx.fillStyle = '#fff';
+  ctx.font = '30px sans-serif';
+  ctx.fillText('Score: ' + w.score + '   Pipes fixed: ' + w.fixedInitial + '/6   Ducks: ' + w.ducksGot + '/3', CONFIG.WIDTH / 2, 540);
+  if (won) ctx.fillText('Time bonus: +' + w.timeBonus + '   Best: ' + (localStorage.getItem('pipe-panic-best') || w.score), CONFIG.WIDTH / 2, 590);
+  else ctx.fillText(w.loseReason === 'flood' ? 'The water hit 75%. Harborview needs a new plumber.' : 'The clock ran out with pipes still bursting.', CONFIG.WIDTH / 2, 590);
+  ctx.fillStyle = '#ffd23e';
+  ctx.font = 'bold 28px sans-serif';
+  ctx.fillText('Press R to play again', CONFIG.WIDTH / 2, 680);
+  ctx.textAlign = 'left';
 }

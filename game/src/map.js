@@ -1,207 +1,82 @@
-// Pipe Panic! — the Harborview Apartments floor plan.
-// Grid 40 x 30 tiles of 40 px. Outer wall ring, three rooms up top, a
-// hallway, three rooms below. Doors are gaps in the wall rows/columns.
-import { CONFIG } from './config.js';
-
-const { COLS, ROWS, TILE } = CONFIG;
-
-export const ROOMS = [
-  { name: 'Apt 1 · Maple', x: 1, y: 1, w: 12, h: 9, color: '#e8dcc0' },
-  { name: 'Laundry', x: 14, y: 1, w: 7, h: 9, color: '#cfe0e8' },
-  { name: 'Apt 2 · Birch', x: 22, y: 1, w: 17, h: 9, color: '#e8dcc0' },
-  { name: 'Hallway', x: 1, y: 11, w: 38, h: 4, color: '#d8d2c4' },
-  { name: 'Apt 4 · Cedar', x: 1, y: 16, w: 12, h: 13, color: '#e8dcc0' },
-  { name: 'Lobby', x: 14, y: 16, w: 7, h: 13, color: '#d8e8d0' },
-  { name: 'Apt 5 · Willow', x: 22, y: 16, w: 17, h: 13, color: '#e8dcc0' },
+const ROOMS = [
+  { name: 'Sunset Apt', x: 0, y: 0, w: 13, h: 10, color: '#e9dcc3' },
+  { name: 'Maple Apt', x: 13, y: 0, w: 13, h: 10, color: '#d7e4cf' },
+  { name: 'Harbor Apt', x: 26, y: 0, w: 14, h: 10, color: '#cfdce9' },
+  { name: 'Laundry', x: 0, y: 10, w: 13, h: 10, color: '#e9d5d5' },
+  { name: 'Kitchen', x: 13, y: 10, w: 13, h: 10, color: '#e9e3c3' },
+  { name: 'Storage', x: 26, y: 10, w: 14, h: 10, color: '#ddd6e9' },
+  { name: 'Basement', x: 0, y: 20, w: 40, h: 10, color: '#c9cdd2' },
 ];
 
-// Furniture: solid rectangles in tile coordinates.
-export const FURNITURE = [
-  { x: 2, y: 2, w: 4, h: 2, label: 'bed' },
-  { x: 8, y: 2, w: 3, h: 2, label: 'table' },
-  { x: 2, y: 6, w: 4, h: 1, label: 'sofa' },
-  { x: 15, y: 1, w: 2, h: 1, label: 'washer' },
-  { x: 18, y: 1, w: 2, h: 1, label: 'washer' },
-  { x: 15, y: 8, w: 2, h: 1, label: 'dryer' },
-  { x: 24, y: 2, w: 4, h: 2, label: 'bed' },
-  { x: 30, y: 2, w: 3, h: 2, label: 'table' },
-  { x: 36, y: 2, w: 1, h: 1, label: 'plant' },
-  { x: 24, y: 7, w: 4, h: 1, label: 'sofa' },
-  { x: 2, y: 17, w: 4, h: 2, label: 'bed' },
-  { x: 8, y: 17, w: 3, h: 2, label: 'table' },
-  { x: 2, y: 26, w: 2, h: 1, label: 'shelf' },
-  { x: 15, y: 17, w: 5, h: 1, label: 'counter' },
-  { x: 19, y: 26, w: 1, h: 1, label: 'plant' },
-  { x: 24, y: 17, w: 4, h: 2, label: 'bed' },
-  { x: 30, y: 17, w: 3, h: 2, label: 'table' },
-  { x: 24, y: 26, w: 4, h: 1, label: 'sofa' },
-  { x: 35, y: 17, w: 2, h: 1, label: 'tv' },
+const FURNITURE = [
+  { room: 0, x: 2, y: 2, w: 3, h: 2, color: '#8a6f4d', label: 'sofa' },
+  { room: 0, x: 9, y: 7, w: 2, h: 2, color: '#7a5a3a', label: 'table' },
+  { room: 1, x: 16, y: 2, w: 4, h: 2, color: '#5d7a52', label: 'bed' },
+  { room: 1, x: 22, y: 7, w: 2, h: 2, color: '#6b5a7a', label: 'desk' },
+  { room: 2, x: 29, y: 2, w: 3, h: 2, color: '#4d6a8a', label: 'sofa' },
+  { room: 2, x: 36, y: 7, w: 2, h: 2, color: '#8a7a4d', label: 'table' },
+  { room: 3, x: 2, y: 12, w: 3, h: 2, color: '#b0b8c0', label: 'washer' },
+  { room: 3, x: 8, y: 16, w: 3, h: 2, color: '#b0b8c0', label: 'dryer' },
+  { room: 4, x: 15, y: 12, w: 4, h: 2, color: '#a08a5a', label: 'counter' },
+  { room: 4, x: 22, y: 17, w: 2, h: 2, color: '#8a6f4d', label: 'table' },
+  { room: 5, x: 29, y: 12, w: 3, h: 3, color: '#9a8a6a', label: 'crates' },
+  { room: 5, x: 35, y: 16, w: 3, h: 2, color: '#9a8a6a', label: 'crates' },
+  { room: 6, x: 2, y: 22, w: 4, h: 2, color: '#7a7f85', label: 'boiler' },
+  { room: 6, x: 34, y: 22, w: 4, h: 2, color: '#7a7f85', label: 'boiler' },
 ];
 
-// The six burst pipes (tile coordinates). Every spot is open floor:
-// a pipe on a furniture tile could never be reached.
-export const PIPE_SPOTS = [
-  { tx: 11, ty: 6 },
-  { tx: 17, ty: 4 },
-  { tx: 33, ty: 6 },
-  { tx: 4, ty: 20 },
-  { tx: 17, ty: 22 },
-  { tx: 30, ty: 24 },
+const PIPE_SPOTS = [
+  { x: 6, y: 5, room: 0, spare: false },
+  { x: 20, y: 4, room: 1, spare: false },
+  { x: 33, y: 6, room: 2, spare: false },
+  { x: 6, y: 15, room: 3, spare: false },
+  { x: 20, y: 15, room: 4, spare: false },
+  { x: 33, y: 15, room: 5, spare: false },
+  { x: 10, y: 25, room: 6, spare: true },
+  { x: 30, y: 25, room: 6, spare: true },
 ];
 
-// Pickups: wrench, coffee, and three hidden rubber ducks.
-export const PICKUP_SPOTS = [
-  { kind: 'wrench', tx: 15, ty: 7 },
-  { kind: 'coffee', tx: 19, ty: 18 },
-  { kind: 'duck', tx: 2, ty: 8 },
-  { kind: 'duck', tx: 37, ty: 8 },
-  { kind: 'duck', tx: 37, ty: 27 },
-];
+const PICKUP_SPOTS = {
+  wrench: { x: 3, y: 25 },
+  coffee: { x: 37, y: 25 },
+  ducks: [
+    { x: 2, y: 2 },
+    { x: 38, y: 2 },
+    { x: 20, y: 27 },
+  ],
+};
 
-export const PLAYER_START = { x: (19 + 0.5) * TILE, y: (12 + 0.5) * TILE };
+const PLAYER_START = { x: 20, y: 26 };
 
-const WALLS = new Set();
-function buildWalls() {
-  for (let x = 0; x < COLS; x++) {
-    WALLS.add(`${x},0`);
-    WALLS.add(`${x},${ROWS - 1}`);
+function buildMap() {
+  const walls = new Set();
+  const key = (x, y) => x + ',' + y;
+  for (let x = 0; x < CONFIG.COLS; x++) {
+    walls.add(key(x, 0));
+    walls.add(key(x, CONFIG.ROWS - 1));
   }
-  for (let y = 0; y < ROWS; y++) {
-    WALLS.add(`0,${y}`);
-    WALLS.add(`${COLS - 1},${y}`);
+  for (let y = 0; y < CONFIG.ROWS; y++) {
+    walls.add(key(0, y));
+    walls.add(key(CONFIG.COLS - 1, y));
   }
-  // Horizontal wall rows with door gaps.
-  for (let x = 1; x <= 38; x++) {
-    if (x !== 6 && x !== 17 && x !== 30) WALLS.add(`${x},10`);
-    if (x !== 6 && x !== 17 && x !== 30) WALLS.add(`${x},15`);
-  }
-  // Vertical walls between rooms, with door gaps.
-  for (let y = 1; y <= 9; y++) {
-    if (y !== 5) WALLS.add(`13,${y}`);
-    if (y !== 5) WALLS.add(`21,${y}`);
-  }
-  for (let y = 16; y <= 28; y++) {
-    if (y !== 22) WALLS.add(`13,${y}`);
-    if (y !== 22) WALLS.add(`21,${y}`);
-  }
-}
-buildWalls();
-
-const FURNITURE_TILES = new Set();
-for (const f of FURNITURE) {
-  for (let y = f.y; y < f.y + f.h; y++) {
-    for (let x = f.x; x < f.x + f.w; x++) FURNITURE_TILES.add(`${x},${y}`);
-  }
-}
-
-export function isWallTile(tx, ty) {
-  if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return true;
-  return WALLS.has(`${tx},${ty}`);
-}
-
-export function isFurnitureTile(tx, ty) {
-  return FURNITURE_TILES.has(`${tx},${ty}`);
-}
-
-export function isSolidTile(tx, ty) {
-  return isWallTile(tx, ty) || isFurnitureTile(tx, ty);
-}
-
-export function walkable(tx, ty) {
-  return !isSolidTile(tx, ty);
-}
-
-export function tileCenter(tx, ty) {
-  return { x: (tx + 0.5) * TILE, y: (ty + 0.5) * TILE };
-}
-
-// Circle (x, y, r) against solid tiles: true when it overlaps one.
-export function collides(x, y, r) {
-  const x0 = Math.floor((x - r) / TILE);
-  const x1 = Math.floor((x + r) / TILE);
-  const y0 = Math.floor((y - r) / TILE);
-  const y1 = Math.floor((y + r) / TILE);
-  for (let ty = y0; ty <= y1; ty++) {
-    for (let tx = x0; tx <= x1; tx++) {
-      if (!isSolidTile(tx, ty)) continue;
-      const cx = Math.max(tx * TILE, Math.min(x, tx * TILE + TILE));
-      const cy = Math.max(ty * TILE, Math.min(y, ty * TILE + TILE));
-      const dx = x - cx;
-      const dy = y - cy;
-      if (dx * dx + dy * dy < r * r) return true;
+  const vDoors = { 13: [5, 15], 26: [4, 14] };
+  for (const vx of [13, 26]) {
+    for (let y = 1; y < 20; y++) {
+      if (vDoors[vx].includes(y)) continue;
+      walls.add(key(vx, y));
     }
   }
-  return false;
+  const hDoors = { 10: [6, 20, 33], 20: [4, 18, 32] };
+  for (const hy of [10, 20]) {
+    for (let x = 1; x < CONFIG.COLS - 1; x++) {
+      if (hDoors[hy].includes(x)) continue;
+      walls.add(key(x, hy));
+    }
+  }
+  return { walls, key };
 }
 
-// Move a circle by (dx, dy) with axis separation and corner assist:
-// when blocked, try small perpendicular nudges so the player slides
-// around door frames instead of wedging on a corner.
-export function moveWithCollision(x, y, dx, dy, r) {
-  const nudges = [0, 3, -3, 6, -6, 9, -9, 12, -12];
-  let nx = x;
-  let ny = y;
-  if (dx !== 0) {
-    let moved = false;
-    for (const n of nudges) {
-      if (!collides(x + dx, y + n, r)) {
-        nx = x + dx;
-        ny = y + n;
-        moved = true;
-        break;
-      }
-    }
-    if (!moved) {
-      nx = x;
-      ny = y;
-    }
-  }
-  if (dy !== 0) {
-    let moved = false;
-    for (const n of nudges) {
-      if (!collides(nx + n, ny + dy, r)) {
-        nx = nx + n;
-        ny = ny + dy;
-        moved = true;
-        break;
-      }
-    }
-    if (!moved) {
-      // keep the x movement already applied
-    }
-  }
-  return { x: nx, y: ny };
-}
-
-// Breadth-first path over walkable tiles, from tile to tile.
-// Returns an array of pixel waypoints (tile centers), excluding the start.
-export function findPath(fromTx, fromTy, toTx, toTy) {
-  if (!walkable(toTx, toTy)) return null;
-  const key = (x, y) => y * COLS + x;
-  const prev = new Map();
-  const seen = new Set([key(fromTx, fromTy)]);
-  const queue = [[fromTx, fromTy]];
-  prev.set(key(fromTx, fromTy), null);
-  while (queue.length > 0) {
-    const [cx, cy] = queue.shift();
-    if (cx === toTx && cy === toTy) {
-      const path = [];
-      let cur = [cx, cy];
-      while (cur !== null) {
-        path.unshift(tileCenter(cur[0], cur[1]));
-        cur = prev.get(key(cur[0], cur[1]));
-      }
-      path.shift(); // drop the start tile
-      return path;
-    }
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nx = cx + dx;
-      const ny = cy + dy;
-      if (!walkable(nx, ny) || seen.has(key(nx, ny))) continue;
-      seen.add(key(nx, ny));
-      prev.set(key(nx, ny), [cx, cy]);
-      queue.push([nx, ny]);
-    }
-  }
-  return null;
+function isWall(map, tx, ty) {
+  if (tx < 0 || ty < 0 || tx >= CONFIG.COLS || ty >= CONFIG.ROWS) return true;
+  return map.walls.has(map.key(tx, ty));
 }

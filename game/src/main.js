@@ -1,102 +1,120 @@
-// Pipe Panic! — game loop and wiring.
-import { CONFIG } from './config.js';
-import { createWorld, updateWorld } from './world.js';
-import { createInput } from './input.js';
-import { render } from './render.js';
-import { createSound } from './sound.js';
-import { stageShot } from './shots.js';
-import * as MAP from './map.js';
+let world = null;
+let screen = 'title';
+let lastTs = 0;
+let seed = 7;
+let shot = '';
 
-const params = new URLSearchParams(location.search);
-const shot = params.get('shot');
-const seed = parseInt(params.get('seed') || '7', 10) || 7;
-
-let world = shot ? stageShot(shot, seed) : createWorld(seed);
-try {
-  world.best = parseInt(localStorage.getItem('pipe-panic-best') || '0', 10) || 0;
-} catch (e) {
-  world.best = 0;
+function params() {
+  const q = new URLSearchParams(location.search);
+  seed = parseInt(q.get('seed') || '7', 10) || 7;
+  shot = q.get('shot') || '';
 }
 
-const input = createInput();
-const sound = createSound();
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
-
-function startShift() {
+function startGame() {
   world = createWorld(seed);
+  screen = 'playing';
+  lastTs = performance.now();
+  Sound.init();
   try {
-    world.best = parseInt(localStorage.getItem('pipe-panic-best') || '0', 10) || 0;
+    if (world.score === 0) {
+      const best = localStorage.getItem('pipe-panic-best');
+      if (best === null) localStorage.setItem('pipe-panic-best', '0');
+    }
   } catch (e) {
-    world.best = 0;
+    // storage may be unavailable; ignore
   }
-  world.screen = 'playing';
-  sound.resume();
 }
 
-canvas.addEventListener('click', () => {
-  if (world.screen === 'title' || world.screen === 'win' || world.screen === 'lose') {
-    startShift();
-  }
-});
-
-let last = performance.now();
-function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000);
-  last = now;
-
-  if (world.screen === 'title' && (input.wasPressed('Space') || input.wasPressed('Enter'))) {
-    world.screen = 'playing';
-    sound.resume();
-  } else if (world.screen === 'playing' && (input.wasPressed('KeyP') || input.wasPressed('Escape'))) {
-    world.screen = 'paused';
-  } else if (world.screen === 'paused' && (input.wasPressed('KeyP') || input.wasPressed('Escape'))) {
-    world.screen = 'playing';
-  } else if ((world.screen === 'win' || world.screen === 'lose') && input.wasPressed('Space')) {
-    startShift();
-  }
-
-  updateWorld(world, input, dt, sound);
-  render(ctx, world);
-  input.endFrame();
-  requestAnimationFrame(frame);
-}
-requestAnimationFrame(frame);
-
-// Playtest hook: state snapshot, walkable grid, and pathfinding.
-window.__pp = {
-  world,
-  input,
-  state() {
-    return {
-      screen: world.screen,
-      px: world.player.x,
-      py: world.player.y,
-      timeLeft: world.timeLeft,
-      elapsed: world.elapsed,
-      score: world.score,
-      best: world.best,
-      coverage: world.coverage,
-      pressure: world.pressure,
-      tier: world.pressureTier,
-      loseReason: world.loseReason,
-      ducksGot: world.ducksGot,
-      pipes: world.pipes.map((p) => ({ x: p.x, y: p.y, tx: p.tx, ty: p.ty, fixed: p.fixed, progress: p.progress })),
-      pickups: world.pickups.map((p) => ({ x: p.x, y: p.y, kind: p.kind, taken: p.taken })),
-    };
-  },
-  grid() {
-    const walkable = [];
-    for (let ty = 0; ty < CONFIG.ROWS; ty++) {
-      for (let tx = 0; tx < CONFIG.COLS; tx++) {
-        walkable.push(MAP.walkable(tx, ty) ? 1 : 0);
+function loop(ts) {
+  const dt = lastTs ? (ts - lastTs) / 1000 : 0.016;
+  lastTs = ts;
+  if (screen === 'playing' && world) {
+    updateWorld(world, dt, Input.keys);
+    if (world.over) {
+      screen = world.won ? 'win' : 'lose';
+      if (world.won) {
+        try {
+          const best = parseInt(localStorage.getItem('pipe-panic-best') || '0', 10);
+          if (world.score > best) localStorage.setItem('pipe-panic-best', String(world.score));
+        } catch (e) {
+          // ignore
+        }
       }
     }
-    return { cols: CONFIG.COLS, rows: CONFIG.ROWS, walkable };
+  }
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  if (world) render(ctx, world, screen);
+  requestAnimationFrame(loop);
+}
+
+function boot() {
+  params();
+  Input.init();
+  world = createWorld(seed);
+  if (shot === 'start') {
+    screen = 'title';
+  } else if (shot === 'play') {
+    applyShot(world, 'play');
+    screen = 'playing';
+  } else if (shot === 'end') {
+    applyShot(world, 'end');
+    screen = 'win';
+  } else {
+    screen = 'title';
+  }
+  addEventListener('keydown', (e) => {
+    Sound.init();
+    if (e.code === 'Enter' || e.code === 'Space') {
+      if (screen === 'title' || screen === 'win' || screen === 'lose') startGame();
+    }
+    if (e.code === 'KeyP' || e.code === 'Escape') {
+      if (screen === 'playing') screen = 'paused';
+      else if (screen === 'paused') screen = 'playing';
+    }
+    if (e.code === 'KeyR') {
+      if (screen === 'win' || screen === 'lose') startGame();
+    }
+  });
+  addEventListener('pointerdown', () => Sound.init());
+  const canvas = document.getElementById('game');
+  canvas.addEventListener('click', () => {
+    if (screen === 'title' || screen === 'win' || screen === 'lose') startGame();
+  });
+  requestAnimationFrame(loop);
+  window.__ppReady = true;
+}
+
+window.__pp = {
+  start() {
+    startGame();
   },
-  findPath(tx, ty) {
-    const fromTx = Math.floor(world.player.x / CONFIG.TILE);
-    const fromTy = Math.floor(world.player.y / CONFIG.TILE);
-    return MAP.findPath(fromTx, fromTy, tx, ty);
+  world() {
+    return world;
   },
+  screen() {
+    return screen;
+  },
+  state() {
+    return {
+      screen,
+      over: world ? world.over : false,
+      won: world ? world.won : false,
+      loseReason: world ? world.loseReason : '',
+      score: world ? world.score : 0,
+      timeLeft: world ? world.timeLeft : 0,
+      water: world ? world.water : 0,
+      pipesFixed: world ? world.fixedInitial : 0,
+      bursts: world ? burstCount(world) : 0,
+      ducks: world ? world.ducksGot : 0,
+    };
+  },
+  warp(tx, ty) {
+    if (!world) return;
+    world.player.x = (tx + 0.5) * CONFIG.TILE;
+    world.player.y = (ty + 0.5) * CONFIG.TILE;
+  },
+  keys: Input.keys,
 };
+
+document.addEventListener('DOMContentLoaded', boot);

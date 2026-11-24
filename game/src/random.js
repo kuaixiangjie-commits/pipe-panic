@@ -1,7 +1,6 @@
-// Seeded RNG (mulberry32) so staged scenes are deterministic.
-export function createRng(seed) {
+function mulberry32(seed) {
   let a = seed >>> 0;
-  return function next() {
+  return function () {
     a |= 0;
     a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
@@ -10,6 +9,18 @@ export function createRng(seed) {
   };
 }
 
-export function pickRng(rng, arr) {
-  return arr[Math.floor(rng() * arr.length)];
+function makeRng(seed) {
+  const next = mulberry32(seed);
+  return {
+    next,
+    int(n) {
+      return Math.floor(next() * n);
+    },
+    chance(p) {
+      return next() < p;
+    },
+    pick(arr) {
+      return arr[Math.floor(next() * arr.length)];
+    },
+  };
 }
