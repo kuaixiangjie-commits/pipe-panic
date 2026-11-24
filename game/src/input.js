@@ -1,56 +1,43 @@
-// Keyboard input: held keys for movement, edge-triggered presses for menus.
-export class Input {
-  constructor() {
-    this.down = new Set();
-    this.pressed = new Set();
-    this.onKeyDown = (e) => {
-      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) {
-        e.preventDefault();
-      }
-      if (!e.repeat) this.pressed.add(e.code);
-      this.down.add(e.code);
-    };
-    this.onKeyUp = (e) => {
-      this.down.delete(e.code);
-    };
-    this.onBlur = () => {
-      this.down.clear();
-    };
-    window.addEventListener("keydown", this.onKeyDown);
-    window.addEventListener("keyup", this.onKeyUp);
-    window.addEventListener("blur", this.onBlur);
-  }
+// Keyboard input: held keys plus edge-triggered presses.
+export function createInput() {
+  const keys = new Set();
+  const pressed = new Set();
 
-  isDown(code) {
-    return this.down.has(code);
-  }
-
-  // True once per physical press; the frame loop clears the queue each frame.
-  consume(code) {
-    if (this.pressed.has(code)) {
-      this.pressed.delete(code);
-      return true;
+  function onKeyDown(e) {
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
+      e.preventDefault();
     }
-    return false;
+    if (!e.repeat) pressed.add(e.code);
+    keys.add(e.code);
   }
+  function onKeyUp(e) {
+    keys.delete(e.code);
+  }
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
 
-  endFrame() {
-    this.pressed.clear();
-  }
-
-  // Normalised WASD / arrow-key direction.
-  dir() {
-    let x = 0;
-    let y = 0;
-    if (this.down.has("KeyA") || this.down.has("ArrowLeft")) x -= 1;
-    if (this.down.has("KeyD") || this.down.has("ArrowRight")) x += 1;
-    if (this.down.has("KeyW") || this.down.has("ArrowUp")) y -= 1;
-    if (this.down.has("KeyS") || this.down.has("ArrowDown")) y += 1;
-    if (x !== 0 && y !== 0) {
-      const inv = 1 / Math.hypot(x, y);
-      x *= inv;
-      y *= inv;
-    }
-    return { x, y };
-  }
+  return {
+    keys,
+    down(code) {
+      return keys.has(code);
+    },
+    wasPressed(code) {
+      return pressed.has(code);
+    },
+    endFrame() {
+      pressed.clear();
+    },
+    axis() {
+      let x = 0;
+      let y = 0;
+      if (keys.has('KeyA') || keys.has('ArrowLeft')) x -= 1;
+      if (keys.has('KeyD') || keys.has('ArrowRight')) x += 1;
+      if (keys.has('KeyW') || keys.has('ArrowUp')) y -= 1;
+      if (keys.has('KeyS') || keys.has('ArrowDown')) y += 1;
+      return { x, y };
+    },
+    action() {
+      return keys.has('KeyE');
+    },
+  };
 }

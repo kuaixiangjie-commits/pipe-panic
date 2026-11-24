@@ -1,80 +1,58 @@
-// Deterministic staged scenes for screenshots: ?shot=start|play|end&seed=N
-import { COLS, ROWS } from "./config.js";
-import { mulberry32, randInt } from "./random.js";
-import { tileCenter } from "./map.js";
+// Deterministic staged scenes for screenshots: ?shot=start|play|end&seed=N.
+import { CONFIG } from './config.js';
+import { createWorld, computeCoverage } from './world.js';
+import * as MAP from './map.js';
 
-export function applyShot(world, search) {
-  const params = new URLSearchParams(search);
-  const shot = params.get("shot");
-  if (!shot) return false;
-  const seed = Number(params.get("seed") || 7) >>> 0;
-  const rng = mulberry32(seed);
+const { COLS, ROWS, TILE } = CONFIG;
 
-  if (shot === "start") {
-    world.screen = "title";
-    return true;
+function paintWaterBlob(w, tx, ty, radius, level) {
+  for (let y = ty - radius; y <= ty + radius; y++) {
+    for (let x = tx - radius; x <= tx + radius; x++) {
+      if (x < 0 || y < 0 || x >= COLS || y >= ROWS) continue;
+      if (MAP.isWallTile(x, y)) continue;
+      const d = Math.hypot(x - tx, y - ty);
+      if (d > radius) continue;
+      const v = level * (1 - d / (radius + 1));
+      const i = y * COLS + x;
+      w.water[i] = Math.max(w.water[i], Math.min(1, v));
+    }
   }
+}
 
-  if (shot === "play") {
-    world.screen = "playing";
-    world.timeLeft = 95;
-    world.score = 450;
-    world.ducks = 1;
-    world.pressure = 55;
-    // Two pipes already fixed (shuffled deterministically), the rest burst.
-    const order = [...world.pipes];
-    for (let i = order.length - 1; i > 0; i--) {
-      const j = Math.floor(rng() * (i + 1));
-      const tmp = order[i];
-      order[i] = order[j];
-      order[j] = tmp;
-    }
-    order[0].burst = false;
-    order[0].progress = 1;
-    order[1].burst = false;
-    order[1].progress = 1;
-    // Standing water pooled around the burst pipes.
-    for (const p of world.pipes) {
-      if (!p.burst) continue;
-      for (let k = 0; k < 14; k++) {
-        const tx = Math.max(0, Math.min(COLS - 1, p.tx + randInt(rng, -3, 3)));
-        const ty = Math.max(0, Math.min(ROWS - 1, p.ty + randInt(rng, -3, 3)));
-        if (world.grid[ty][tx] === 0) world.water[ty * COLS + tx] = 0.4 + rng() * 0.5;
-      }
-    }
-    let wet = 0;
-    let floor = 0;
-    for (let ty = 0; ty < ROWS; ty++) {
-      for (let tx = 0; tx < COLS; tx++) {
-        if (world.grid[ty][tx] !== 0) continue;
-        floor++;
-        if (world.water[ty * COLS + tx] > 0.25) wet++;
-      }
-    }
-    world.coverage = floor ? wet / floor : 0;
-    // Pip mid-map, wrench in hand.
-    const c = tileCenter(20, 14);
-    world.player.x = c.x;
-    world.player.y = c.y;
-    world.effects.wrench = 8;
-    world.pickups[2].taken = true; // the one duck already collected
-    return true;
+export function stageShot(shot, seed = 7) {
+  const w = createWorld(seed);
+  if (shot === 'start') {
+    w.screen = 'title';
+    return w;
   }
-
-  if (shot === "end") {
-    for (const p of world.pipes) {
-      p.burst = false;
-      p.progress = 1;
+  if (shot === 'play') {
+    w.screen = 'playing';
+    w.elapsed = 86;
+    w.timeLeft = 94;
+    w.score = 450;
+    // Two pipes already fixed; the rest still burst with water pooling.
+    w.pipes[0].fixed = true;
+    w.pipes[3].fixed = true;
+    for (const p of w.pipes) {
+      if (!p.fixed) paintWaterBlob(w, p.tx, p.ty, 3, 0.95);
     }
-    world.screen = "win";
-    world.result = "win";
-    world.score = 2714;
-    world.timeLeft = 42;
-    world.timeBonus = 420;
-    world.coverage = 0.12;
-    world.pressure = 18;
-    return true;
+    w.coverage = computeCoverage(w);
+    w.pressure = Math.min(100, 4 * 11 + w.coverage * 55);
+    w.pressureTier = w.pressure < 25 ? 'CALM' : w.pressure < 50 ? 'BUSY' : w.pressure < 75 ? 'RUSH' : 'FLOODING';
+    w.wrenchUntil = w.elapsed + 7;
+    w.player.x = (19 + 0.5) * TILE;
+    w.player.y = (12 + 0.5) * TILE;
+    return w;
   }
-
-  return false;
+  // 'end': the win screen.
+  w.screen = 'win';
+  w.score = 2714;
+  w.best = 2714;
+  w.timeLeft = 145;
+  w.elapsed = 35;
+  for (const p of w.pipes) p.fixed = true;
+  w.coverage = 0;
+  w.pressure = 0;
+  w.pressureTier = 'CALM';
+  return w;
 }

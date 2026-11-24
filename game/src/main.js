@@ -1,83 +1,102 @@
-// Pipe Panic! entrypoint: wires input, world, renderer and sound, runs the loop.
-import { World } from "./world.js";
-import { Renderer } from "./render.js";
-import { Input } from "./input.js";
-import { Sound } from "./sound.js";
-import { applyShot } from "./shots.js";
+// Pipe Panic! — game loop and wiring.
+import { CONFIG } from './config.js';
+import { createWorld, updateWorld } from './world.js';
+import { createInput } from './input.js';
+import { render } from './render.js';
+import { createSound } from './sound.js';
+import { stageShot } from './shots.js';
+import * as MAP from './map.js';
 
-const canvas = document.getElementById("game");
-const input = new Input();
-const sound = new Sound();
-const renderer = new Renderer(canvas);
+const params = new URLSearchParams(location.search);
+const shot = params.get('shot');
+const seed = parseInt(params.get('seed') || '7', 10) || 7;
 
-function seedFromUrl() {
-  const s = new URLSearchParams(location.search).get("seed");
-  const n = Number(s);
-  return Number.isFinite(n) && n > 0 ? n >>> 0 : (Math.random() * 1e9) >>> 0;
+let world = shot ? stageShot(shot, seed) : createWorld(seed);
+try {
+  world.best = parseInt(localStorage.getItem('pipe-panic-best') || '0', 10) || 0;
+} catch (e) {
+  world.best = 0;
 }
 
-let world = new World(seedFromUrl());
+const input = createInput();
+const sound = createSound();
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
 
-function wire(w) {
-  w.onPickup = (kind) => {
-    if (kind === "duck") sound.duck();
-    else sound.pickup();
-  };
-  w.onRepairTick = () => sound.repairTick();
-  w.onFixed = () => sound.fixed();
-  w.onReburst = () => sound.reburst();
-  w.onWin = () => sound.win();
-  w.onLose = () => sound.lose();
-}
-
-wire(world);
-applyShot(world, location.search);
-
-function restart() {
-  world = new World((Math.random() * 1e9) >>> 0);
-  wire(world);
-  world.start();
+function startShift() {
+  world = createWorld(seed);
+  try {
+    world.best = parseInt(localStorage.getItem('pipe-panic-best') || '0', 10) || 0;
+  } catch (e) {
+    world.best = 0;
+  }
+  world.screen = 'playing';
   sound.resume();
 }
 
+canvas.addEventListener('click', () => {
+  if (world.screen === 'title' || world.screen === 'win' || world.screen === 'lose') {
+    startShift();
+  }
+});
+
 let last = performance.now();
 function frame(now) {
-  const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+  const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  if (input.consume("Space") || input.consume("Enter")) {
-    if (world.screen === "title") {
-      world.start();
-      sound.resume();
-    } else if (world.screen === "win" || world.screen === "lose") {
-      restart();
-    }
+
+  if (world.screen === 'title' && (input.wasPressed('Space') || input.wasPressed('Enter'))) {
+    world.screen = 'playing';
+    sound.resume();
+  } else if (world.screen === 'playing' && (input.wasPressed('KeyP') || input.wasPressed('Escape'))) {
+    world.screen = 'paused';
+  } else if (world.screen === 'paused' && (input.wasPressed('KeyP') || input.wasPressed('Escape'))) {
+    world.screen = 'playing';
+  } else if ((world.screen === 'win' || world.screen === 'lose') && input.wasPressed('Space')) {
+    startShift();
   }
-  if (input.consume("KeyP") || input.consume("Escape")) {
-    if (world.screen === "playing") world.screen = "paused";
-    else if (world.screen === "paused") world.screen = "playing";
-  }
-  if (world.screen === "playing") world.update(dt, input);
-  renderer.draw(world, now);
+
+  updateWorld(world, input, dt, sound);
+  render(ctx, world);
   input.endFrame();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
-canvas.addEventListener("click", () => {
-  if (world.screen === "title") {
-    world.start();
-    sound.resume();
-  } else if (world.screen === "win" || world.screen === "lose") {
-    restart();
-  }
-});
-
-// Debug / automation handle: the autopilot reads state and the grid from here.
+// Playtest hook: state snapshot, walkable grid, and pathfinding.
 window.__pp = {
-  get world() {
-    return world;
-  },
+  world,
   input,
-  sound,
-  snapshot: () => world.snapshot(),
+  state() {
+    return {
+      screen: world.screen,
+      px: world.player.x,
+      py: world.player.y,
+      timeLeft: world.timeLeft,
+      elapsed: world.elapsed,
+      score: world.score,
+      best: world.best,
+      coverage: world.coverage,
+      pressure: world.pressure,
+      tier: world.pressureTier,
+      loseReason: world.loseReason,
+      ducksGot: world.ducksGot,
+      pipes: world.pipes.map((p) => ({ x: p.x, y: p.y, tx: p.tx, ty: p.ty, fixed: p.fixed, progress: p.progress })),
+      pickups: world.pickups.map((p) => ({ x: p.x, y: p.y, kind: p.kind, taken: p.taken })),
+    };
+  },
+  grid() {
+    const walkable = [];
+    for (let ty = 0; ty < CONFIG.ROWS; ty++) {
+      for (let tx = 0; tx < CONFIG.COLS; tx++) {
+        walkable.push(MAP.walkable(tx, ty) ? 1 : 0);
+      }
+    }
+    return { cols: CONFIG.COLS, rows: CONFIG.ROWS, walkable };
+  },
+  findPath(tx, ty) {
+    const fromTx = Math.floor(world.player.x / CONFIG.TILE);
+    const fromTy = Math.floor(world.player.y / CONFIG.TILE);
+    return MAP.findPath(fromTx, fromTy, tx, ty);
+  },
 };
