@@ -4,38 +4,35 @@
 [![rank](https://make.fun/badge/gta6-01/kuaixiangjie-commits/pipe-panic/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/kuaixiangjie-commits/pipe-panic/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-Pipe Panic! is a 2D top-down plumber game. One rainy night in **Copperton**, every pipe in the old **Harborview Apartments** burst at once, and you are Pip Calloway, the plumber on call. Fix all 6 burst pipes before the 3-minute shift ends — if the standing water covers 75% of the floor, the building floods and the shift fails.
+One rainy night in Copperton, every pipe in Harborview Apartments burst at once. You are **Pip Calloway**, the plumber on call. Fix all **6 burst pipes** before the 3:00 shift ends — if the standing water covers **75%** of the floor, the building floods and the shift is lost.
 
 ## How to play
 
-- **Move** — WASD or arrow keys.
-- **Repair / mop** — hold **E** near a burst pipe to repair it; hold **E** anywhere else to mop up water.
-- **Pause** — P or Esc. **Restart** — Space or click on the title / end screens.
-- **Goal** — fix all 6 burst pipes before the timer runs out.
-- **Pressure gauge** — leaks and standing water push the pressure up (CALM / BUSY / RUSH / FLOODING). At high pressure, a repaired pipe can burst again mid-shift. Fixing pipes and mopping bring it back down.
-- **Pickups** — wrench (repair twice as fast, 12 s), coffee (move faster, 12 s), rubber ducks (+50 points).
-- **Score** — points for repairs, mops and ducks, plus a time bonus for finishing early. Your best score is saved in the browser (localStorage).
-
-## Screenshots
-
-The game supports `?shot=start|play|end&seed=N` for stable staged scenes (see `shots.json`).
+- **Move:** WASD or arrow keys.
+- **Hold E** near a burst pipe to repair it. Hold **E** anywhere else to mop up water.
+- **P** or **Esc** to pause. **Space** or click to start / restart.
+- **Pressure gauge:** leaks and standing water push the pressure up through CALM → BUSY → RUSH → FLOODING. At FLOODING, fixed pipes can burst again, so mop as well as repair.
+- **Pickups:** wrench (repair twice as fast, 12 s), coffee (move faster, 12 s), rubber ducks (+50 points each, 3 hidden around the building).
+- **Score:** repairs, mopped water, and ducks, plus a time bonus for finishing early. Your best score is saved in the browser.
 
 ## Run it
 
 ```sh
 node serve.ts
-# open http://localhost:8080/game/
 ```
 
-Pure static files under `game/` — no network requests, no external assets. All art is hand-drawn on canvas and all sound is synthesized with WebAudio. Original everything: city, characters, names and story are invented for this game; nothing is taken from any existing game.
+Then open http://localhost:8080/game/index.html — no build step, no dependencies, no network calls. All art is drawn on canvas and all sound is synthesised with WebAudio.
 
-## Build the submission bundle
+## Staged screenshots
+
+The game supports `?shot=start|play|end&seed=N` for deterministic scenes (see `shots.json`).
+
+## Tests
 
 ```sh
-MAKEFUN_OUTPUT_DIR=out node main.ts
-# out/ contains game/, screenshots/ and dossier.json
+node playtest.mjs
 ```
 
----
+A headless autopilot plays the real game and verifies a win (all 6 pipes fixed) and a loss (the building floods with no input), with zero console errors and zero non-localhost requests.
 
-<sub>Entered on [make.fun](https://make.fun/bounty/gta6-01) · AI agents build software for cash rewards</sub>
+Built by an AI agent for make.fun's "Make GTA 6" bounty: https://make.fun/bounty/gta6-01
